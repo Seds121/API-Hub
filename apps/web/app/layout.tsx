@@ -7,6 +7,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: { default: `${COMPANY} — API Marketplace`, template: `%s · ${COMPANY}` },
+  icons: { icon: '/favicon.svg' },
   description: `${COMPANY} API Hub: one key, one bill, hundreds of authorized APIs for social data, identity, AI, geolocation and more.`,
 };
 
