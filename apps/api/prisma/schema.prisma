@@ -1,0 +1,1047 @@
+// Ze-Ze Technologies — API Marketplace & Reseller Platform
+// PostgreSQL schema. Money columns are Decimal(18,6); never floats.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum OrgType {
+  PLATFORM
+  AGENCY
+  CUSTOMER
+}
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum RoleScope {
+  PLATFORM
+  ORGANIZATION
+}
+
+enum ProviderKind {
+  RAPIDAPI
+  DIRECT_REST
+}
+
+enum ProviderAuthType {
+  NONE
+  API_KEY
+  BEARER
+  BASIC
+  OAUTH2
+  CUSTOM_HEADERS
+}
+
+enum ProviderStatus {
+  ACTIVE
+  DEGRADED
+  DOWN
+  DISABLED
+}
+
+enum CredentialKind {
+  API_KEY
+  BEARER_TOKEN
+  BASIC
+  OAUTH2_CLIENT
+  HEADERS
+}
+
+enum ProviderSubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum LicenseStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+  REVOKED
+}
+
+enum ApiStatus {
+  DRAFT
+  PUBLISHED
+  DISABLED
+}
+
+enum HttpMethod {
+  GET
+  POST
+  PUT
+  PATCH
+  DELETE
+}
+
+enum BodyMode {
+  NONE
+  PASSTHROUGH_VALIDATED
+  TEMPLATE
+}
+
+enum PlanType {
+  SUBSCRIPTION
+  PREPAID
+  PAYG
+  ENTERPRISE
+}
+
+enum BillingInterval {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+enum PricingScope {
+  PRODUCT_DEFAULT
+  ENDPOINT
+  ORGANIZATION
+  AGENCY_WHOLESALE
+}
+
+enum WalletTxType {
+  TOPUP
+  USAGE_DEBIT
+  ADMIN_CREDIT
+  ADMIN_DEBIT
+  REFUND
+  SUBSCRIPTION_FEE
+  PLAN_CREDIT_GRANT
+  TRANSFER_IN
+  TRANSFER_OUT
+  REVERSAL
+}
+
+enum ReservationStatus {
+  HELD
+  SETTLED
+  RELEASED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  REFUNDED
+}
+
+enum PaymentProviderKind {
+  STRIPE
+  PAYPAL
+  MANUAL_BANK
+  MOCK
+}
+
+enum PaymentPurpose {
+  WALLET_TOPUP
+  SUBSCRIPTION
+}
+
+enum PaymentStatus {
+  PENDING
+  REQUIRES_ACTION
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum ApiKeyEnvironment {
+  LIVE
+  TEST
+}
+
+enum TicketStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  API_KEY
+}
+
+enum AlertMetric {
+  PROVIDER_DOWN
+  ERROR_RATE
+  LATENCY_MS
+  LOW_BALANCE
+  PROVIDER_SUBSCRIPTION_EXPIRY
+  LICENSE_EXPIRY
+}
+
+enum AlertChannel {
+  LOG
+  EMAIL
+  WEBHOOK
+}
+
+enum AgreementStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+// ─────────────────────────── Identity ───────────────────────────
+
+model User {
+  id               String               @id @default(uuid()) @db.Uuid
+  email            String               @unique
+  name             String
+  passwordHash     String
+  status           UserStatus           @default(ACTIVE)
+  mfaEnabled       Boolean              @default(false)
+  mfaSecretEnc     String?
+  emailVerifiedAt  DateTime?
+  lastLoginAt      DateTime?
+  failedLoginCount Int                  @default(0)
+  lockedUntil      DateTime?
+  isDemo           Boolean              @default(false)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  deletedAt        DateTime?
+  memberships      OrganizationMember[]
+  sessions         Session[]
+  apiKeysCreated   CustomerApiKey[]     @relation("ApiKeyCreator")
+  tickets          SupportTicket[]      @relation("TicketCreator")
+  ticketMessages   TicketMessage[]
+
+  @@map("users")
+}
+
+model Session {
+  id          String    @id @default(uuid()) @db.Uuid
+  tokenHash   String    @unique
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrgId String?   @db.Uuid
+  ip          String?
+  userAgent   String?
+  mfaVerified Boolean   @default(false)
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  lastSeenAt  DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Organization {
+  id             String                 @id @default(uuid()) @db.Uuid
+  name           String
+  slug           String                 @unique
+  type           OrgType                @default(CUSTOMER)
+  status         OrgStatus              @default(ACTIVE)
+  parentOrgId    String?                @db.Uuid
+  parent         Organization?          @relation("OrgHierarchy", fields: [parentOrgId], references: [id])
+  children       Organization[]         @relation("OrgHierarchy")
+  /// Monthly spend cap (subaccounts of agencies, or self-imposed). Null = no cap.
+  monthlySpendLimit Decimal?            @db.Decimal(18, 6)
+  billingEmail   String?
+  country        String?
+  taxId          String?
+  isDemo         Boolean                @default(false)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  deletedAt      DateTime?
+  members        OrganizationMember[]
+  wallet         Wallet?
+  apiKeys        CustomerApiKey[]
+  subscriptions  CustomerSubscription[]
+  pricingRules   PricingRule[]
+  invoices       Invoice[]
+  payments       Payment[]
+  usageRecords   ApiUsageRecord[]
+  tickets        SupportTicket[]
+  agencyAgreement AgencyAgreement?
+  auditLogs      AuditLog[]
+
+  @@index([parentOrgId])
+  @@index([type, status])
+  @@map("organizations")
+}
+
+model Role {
+  id          String               @id @default(uuid()) @db.Uuid
+  key         String               @unique
+  name        String
+  description String?
+  scope       RoleScope
+  isSystem    Boolean              @default(true)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  permissions RolePermission[]
+  members     OrganizationMember[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model OrganizationMember {
+  id        String       @id @default(uuid()) @db.Uuid
+  orgId     String       @db.Uuid
+  userId    String       @db.Uuid
+  roleId    String       @db.Uuid
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role         @relation(fields: [roleId], references: [id])
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([orgId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+// ─────────────────────────── Supply side ───────────────────────────
+
+model ApiProvider {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  name               String
+  slug               String                 @unique
+  kind               ProviderKind
+  description        String?
+  website            String?
+  baseUrl            String
+  /// Hostnames the integration engine may contact for this provider (SSRF allowlist).
+  allowedHosts       String[]
+  authType           ProviderAuthType       @default(API_KEY)
+  /// Non-secret auth config: header names, query param name, OAuth token URL & scopes.
+  authConfig         Json                   @default("{}")
+  /// Non-secret static headers sent on every upstream call.
+  defaultHeaders     Json                   @default("{}")
+  timeoutMs          Int                    @default(10000)
+  retryMaxAttempts   Int                    @default(1)
+  retryBackoffMs     Int                    @default(300)
+  retryOnStatuses    Int[]                  @default([502, 503, 504])
+  maxConcurrency     Int                    @default(20)
+  rateLimitPerMinute Int?
+  healthCheckPath    String?
+  status             ProviderStatus         @default(ACTIVE)
+  /// Mock/demo providers only work outside production.
+  isMock             Boolean                @default(false)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  deletedAt          DateTime?
+  credentials        ProviderCredential[]
+  subscriptions      ProviderSubscription[]
+  licenses           ProviderLicense[]
+  integrations       ApiIntegration[]
+  healthChecks       ProviderHealthCheck[]
+  supplierUsage      SupplierUsageRecord[]
+
+  @@map("api_providers")
+}
+
+model ProviderCredential {
+  id          String         @id @default(uuid()) @db.Uuid
+  providerId  String         @db.Uuid
+  provider    ApiProvider    @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  label       String
+  kind        CredentialKind
+  /// AES-256-GCM ciphertext of a JSON secret payload. Never returned by the API.
+  cipherText  String
+  iv          String
+  authTag     String
+  keyVersion  Int            @default(1)
+  /// Non-reversible hint for admins, e.g. "••••a1b2".
+  hint        String
+  isActive    Boolean        @default(true)
+  expiresAt   DateTime?
+  rotatedAt   DateTime?
+  createdById String?        @db.Uuid
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([providerId, isActive])
+  @@map("provider_credentials")
+}
+
+model ProviderSubscription {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  providerId         String                     @db.Uuid
+  provider           ApiProvider                @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  planName           String
+  externalRef        String?
+  status             ProviderSubscriptionStatus @default(ACTIVE)
+  startsAt           DateTime
+  expiresAt          DateTime?
+  monthlyFee         Decimal?                   @db.Decimal(18, 6)
+  currency           String                     @default("USD")
+  includedCalls      Int?
+  usageLimitPerMonth Int?
+  usageLimitPerDay   Int?
+  overagePricePerCall Decimal?                  @db.Decimal(18, 6)
+  notes              String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  @@index([providerId, status])
+  @@map("provider_subscriptions")
+}
+
+/// Records downstream redistribution rights. APIs cannot go live without a VERIFIED license
+/// with redistributionAllowed = true.
+model ProviderLicense {
+  id                    String        @id @default(uuid()) @db.Uuid
+  providerId            String        @db.Uuid
+  provider              ApiProvider   @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  /// Null = applies to all products using this provider.
+  apiProductId          String?       @db.Uuid
+  apiProduct            ApiProduct?   @relation(fields: [apiProductId], references: [id])
+  status                LicenseStatus @default(PENDING)
+  redistributionAllowed Boolean       @default(false)
+  subResaleAllowed      Boolean       @default(false)
+  cachingAllowed        Boolean       @default(false)
+  cacheTtlSeconds       Int?
+  territory             String?
+  restrictions          String?
+  documentRef           String?
+  evidenceNotes         String?
+  isDemo                Boolean       @default(false)
+  verifiedById          String?       @db.Uuid
+  verifiedAt            DateTime?
+  effectiveFrom         DateTime      @default(now())
+  expiresAt             DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  @@index([providerId, status])
+  @@index([apiProductId])
+  @@map("provider_licenses")
+}
+
+model ProviderHealthCheck {
+  id         String      @id @default(uuid()) @db.Uuid
+  providerId String      @db.Uuid
+  provider   ApiProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  ok         Boolean
+  statusCode Int?
+  latencyMs  Int?
+  error      String?
+  checkedAt  DateTime    @default(now())
+
+  @@index([providerId, checkedAt])
+  @@map("provider_health_checks")
+}
+
+// ─────────────────────────── Catalog ───────────────────────────
+
+model ApiCategory {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String       @unique
+  description String?
+  icon        String?
+  sortOrder   Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  products    ApiProduct[]
+
+  @@map("api_categories")
+}
+
+model ApiProduct {
+  id                        String            @id @default(uuid()) @db.Uuid
+  /// Internal identifier, e.g. "ZZ-API-0001".
+  internalCode              String            @unique
+  /// Public route segment: /v1/<slug>/...
+  slug                      String            @unique
+  name                      String
+  summary                   String
+  description               String?
+  docsMarkdown              String?
+  categoryId                String            @db.Uuid
+  category                  ApiCategory       @relation(fields: [categoryId], references: [id])
+  status                    ApiStatus         @default(DRAFT)
+  tags                      String[]
+  /// Display label for the marketplace "provider" filter (admin-chosen; not the supplier record).
+  publisherName             String?
+  logoUrl                   String?
+  usageRestrictions         String?
+  isFeatured                Boolean           @default(false)
+  requiresSubscription      Boolean           @default(false)
+  defaultRateLimitPerMinute Int               @default(60)
+  popularity                Int               @default(0)
+  publishedAt               DateTime?
+  isDemo                    Boolean           @default(false)
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+  deletedAt                 DateTime?
+  endpoints                 ApiEndpoint[]
+  pricingRules              PricingRule[]
+  licenses                  ProviderLicense[]
+  usageRecords              ApiUsageRecord[]
+
+  @@index([status, categoryId])
+  @@map("api_products")
+}
+
+model ApiEndpoint {
+  id                 String           @id @default(uuid()) @db.Uuid
+  productId          String           @db.Uuid
+  product            ApiProduct       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name               String
+  method             HttpMethod
+  /// Public path below the product, e.g. "/profile" or "/users/{id}".
+  path               String
+  description        String?
+  /// Array of ParamDef (see @zeze/shared paramDefSchema).
+  params             Json             @default("[]")
+  requestBodyExample Json?
+  responseExample    Json?
+  errorCodes         Json?
+  maxBodyBytes       Int              @default(65536)
+  rateLimitPerMinute Int?
+  isActive           Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  integrations       ApiIntegration[]
+  pricingRules       PricingRule[]
+  usageRecords       ApiUsageRecord[]
+
+  @@unique([productId, method, path])
+  @@map("api_endpoints")
+}
+
+/// Maps a public endpoint to an approved upstream provider call.
+model ApiIntegration {
+  id                String           @id @default(uuid()) @db.Uuid
+  endpointId        String           @db.Uuid
+  endpoint          ApiEndpoint      @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  providerId        String           @db.Uuid
+  provider          ApiProvider      @relation(fields: [providerId], references: [id])
+  /// Lower runs first; others are failovers.
+  priority          Int              @default(0)
+  upstreamMethod    HttpMethod
+  /// Path appended to provider baseUrl. May contain {param} placeholders bound to path params.
+  upstreamPath      String
+  /// { "<customerParam>": "<upstreamParam>" } plus "static": { k: v }
+  queryMapping      Json             @default("{}")
+  /// { "forward": ["accept-language"], "static": { "x-foo": "bar" } }
+  headerMapping     Json             @default("{}")
+  bodyMode          BodyMode         @default(NONE)
+  bodyTemplate      Json?
+  /// { "pick": ["a","b.c"], "rename": {"a":"x"} } — optional normalization.
+  responseTransform Json?
+  timeoutMsOverride Int?
+  /// Supplier cost per successful call when known.
+  costPerCall       Decimal?         @db.Decimal(18, 6)
+  /// True when costPerCall is an estimate rather than a contractual/actual figure.
+  costIsEstimated   Boolean          @default(true)
+  costCurrency      String           @default("USD")
+  isActive          Boolean          @default(true)
+  lastTestedAt      DateTime?
+  lastTestOk        Boolean?
+  lastTestStatus    Int?
+  lastTestError     String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  supplierUsage     SupplierUsageRecord[]
+
+  @@index([endpointId, isActive, priority])
+  @@index([providerId])
+  @@map("api_integrations")
+}
+
+// ─────────────────────────── Commercial ───────────────────────────
+
+model SubscriptionPlan {
+  id                     String                 @id @default(uuid()) @db.Uuid
+  code                   String                 @unique
+  name                   String
+  description            String?
+  type                   PlanType
+  interval               BillingInterval?
+  price                  Decimal                @db.Decimal(18, 6)
+  currency               String                 @default("USD")
+  /// Requests per period covered by the plan fee (0 = none).
+  includedRequests       Int                    @default(0)
+  /// Charge for requests beyond the included quota. Null = use per-API price.
+  overagePricePerRequest Decimal?               @db.Decimal(18, 6)
+  /// Wallet credit granted on purchase (prepaid packs).
+  creditGrant            Decimal                @default(0) @db.Decimal(18, 6)
+  /// Percentage discount on per-request prices while subscribed.
+  discountPercent        Decimal                @default(0) @db.Decimal(5, 2)
+  rateLimitPerMinute     Int                    @default(60)
+  features               String[]
+  isPublic               Boolean                @default(true)
+  isActive               Boolean                @default(true)
+  sortOrder              Int                    @default(0)
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  subscriptions          CustomerSubscription[]
+
+  @@map("subscription_plans")
+}
+
+model CustomerSubscription {
+  id                   String             @id @default(uuid()) @db.Uuid
+  orgId                String             @db.Uuid
+  org                  Organization       @relation(fields: [orgId], references: [id])
+  planId               String             @db.Uuid
+  plan                 SubscriptionPlan   @relation(fields: [planId], references: [id])
+  status               SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean            @default(false)
+  autoRenew            Boolean            @default(true)
+  requestsUsedInPeriod Int                @default(0)
+  externalRef          String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@index([orgId, status])
+  @@index([currentPeriodEnd])
+  @@map("customer_subscriptions")
+}
+
+model PricingRule {
+  id                 String        @id @default(uuid()) @db.Uuid
+  scope              PricingScope
+  productId          String?       @db.Uuid
+  product            ApiProduct?   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  endpointId         String?       @db.Uuid
+  endpoint           ApiEndpoint?  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  orgId              String?       @db.Uuid
+  org                Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  pricePerRequest    Decimal       @db.Decimal(18, 6)
+  currency           String        @default("USD")
+  discountPercent    Decimal?      @db.Decimal(5, 2)
+  /// Wallet must retain at least this balance after deduction.
+  minWalletBalance   Decimal?      @db.Decimal(18, 6)
+  /// Charge also on 4xx upstream responses (default: only 2xx/3xx are billable).
+  chargeOnClientError Boolean      @default(false)
+  /// Set by an agency for its subaccounts.
+  createdByOrgId     String?       @db.Uuid
+  isActive           Boolean       @default(true)
+  validFrom          DateTime      @default(now())
+  validTo            DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([scope, productId, isActive])
+  @@index([orgId, productId])
+  @@map("pricing_rules")
+}
+
+model AgencyAgreement {
+  id                       String          @id @default(uuid()) @db.Uuid
+  agencyOrgId              String          @unique @db.Uuid
+  agencyOrg                Organization    @relation(fields: [agencyOrgId], references: [id], onDelete: Cascade)
+  status                   AgreementStatus @default(ACTIVE)
+  /// Discount off product default price for agency wholesale purchases.
+  wholesaleDiscountPercent Decimal         @default(0) @db.Decimal(5, 2)
+  /// Share of subaccount spend credited back to the agency.
+  revenueSharePercent      Decimal         @default(0) @db.Decimal(5, 2)
+  maxSubaccounts           Int             @default(25)
+  allowCustomPricing       Boolean         @default(true)
+  notes                    String?
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+
+  @@map("agency_agreements")
+}
+
+model Wallet {
+  id                  String              @id @default(uuid()) @db.Uuid
+  orgId               String              @unique @db.Uuid
+  org                 Organization        @relation(fields: [orgId], references: [id])
+  balance             Decimal             @default(0) @db.Decimal(18, 6)
+  /// Funds held for in-flight gateway calls.
+  reserved            Decimal             @default(0) @db.Decimal(18, 6)
+  currency            String              @default("USD")
+  /// Enterprise credit arrangement: how far below zero balance may go. 0 = no negative balances.
+  creditLimit         Decimal             @default(0) @db.Decimal(18, 6)
+  lowBalanceThreshold Decimal             @default(5) @db.Decimal(18, 6)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  transactions        WalletTransaction[]
+  reservations        WalletReservation[]
+
+  @@map("wallets")
+}
+
+/// Immutable ledger (UPDATE/DELETE blocked by DB trigger).
+model WalletTransaction {
+  id             String       @id @default(uuid()) @db.Uuid
+  walletId       String       @db.Uuid
+  wallet         Wallet       @relation(fields: [walletId], references: [id])
+  type           WalletTxType
+  /// Signed amount: positive credits, negative debits.
+  amount         Decimal      @db.Decimal(18, 6)
+  balanceAfter   Decimal      @db.Decimal(18, 6)
+  currency       String       @default("USD")
+  description    String
+  idempotencyKey String       @unique
+  referenceType  String?
+  referenceId    String?
+  actorUserId    String?      @db.Uuid
+  metadata       Json         @default("{}")
+  createdAt      DateTime     @default(now())
+
+  @@index([walletId, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("wallet_transactions")
+}
+
+model WalletReservation {
+  id            String            @id @default(uuid()) @db.Uuid
+  walletId      String            @db.Uuid
+  wallet        Wallet            @relation(fields: [walletId], references: [id])
+  correlationId String            @unique
+  amount        Decimal           @db.Decimal(18, 6)
+  status        ReservationStatus @default(HELD)
+  expiresAt     DateTime
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([status, expiresAt])
+  @@map("wallet_reservations")
+}
+
+model Invoice {
+  id          String        @id @default(uuid()) @db.Uuid
+  number      String        @unique
+  orgId       String        @db.Uuid
+  org         Organization  @relation(fields: [orgId], references: [id])
+  status      InvoiceStatus @default(OPEN)
+  currency    String        @default("USD")
+  subtotal    Decimal       @db.Decimal(18, 6)
+  tax         Decimal       @default(0) @db.Decimal(18, 6)
+  total       Decimal       @db.Decimal(18, 6)
+  periodStart DateTime?
+  periodEnd   DateTime?
+  issuedAt    DateTime      @default(now())
+  dueAt       DateTime?
+  paidAt      DateTime?
+  paymentId   String?       @unique @db.Uuid
+  payment     Payment?      @relation(fields: [paymentId], references: [id])
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  lines       InvoiceLine[]
+
+  @@index([orgId, issuedAt])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String  @id @default(uuid()) @db.Uuid
+  invoiceId   String  @db.Uuid
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  quantity    Decimal @db.Decimal(18, 6)
+  unitPrice   Decimal @db.Decimal(18, 6)
+  amount      Decimal @db.Decimal(18, 6)
+
+  @@map("invoice_lines")
+}
+
+model Payment {
+  id             String              @id @default(uuid()) @db.Uuid
+  orgId          String              @db.Uuid
+  org            Organization        @relation(fields: [orgId], references: [id])
+  provider       PaymentProviderKind
+  purpose        PaymentPurpose
+  status         PaymentStatus       @default(PENDING)
+  amount         Decimal             @db.Decimal(18, 6)
+  refundedAmount Decimal             @default(0) @db.Decimal(18, 6)
+  currency       String              @default("USD")
+  planId         String?             @db.Uuid
+  externalId     String?             @unique
+  idempotencyKey String              @unique
+  checkoutUrl    String?
+  bankReference  String?
+  failureReason  String?
+  verifiedById   String?             @db.Uuid
+  createdById    String?             @db.Uuid
+  metadata       Json                @default("{}")
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  invoice        Invoice?
+
+  @@index([orgId, createdAt])
+  @@index([status])
+  @@map("payments")
+}
+
+model WebhookEvent {
+  id          String        @id @default(uuid()) @db.Uuid
+  provider    String
+  eventId     String
+  type        String
+  payloadHash String
+  payload     Json?
+  status      WebhookStatus @default(RECEIVED)
+  error       String?
+  receivedAt  DateTime      @default(now())
+  processedAt DateTime?
+
+  @@unique([provider, eventId])
+  @@map("webhook_events")
+}
+
+// ─────────────────────────── Usage ───────────────────────────
+
+model CustomerApiKey {
+  id                 String            @id @default(uuid()) @db.Uuid
+  orgId              String            @db.Uuid
+  org                Organization      @relation(fields: [orgId], references: [id])
+  createdById        String?           @db.Uuid
+  createdBy          User?             @relation("ApiKeyCreator", fields: [createdById], references: [id])
+  name               String
+  environment        ApiKeyEnvironment @default(LIVE)
+  /// Public lookup prefix, e.g. "zz_live_a1b2c3d4".
+  prefix             String            @unique
+  /// HMAC-SHA256(secret) — the secret itself is never stored.
+  keyHash            String            @unique
+  last4              String
+  /// Product slugs this key may call. ["*"] = all subscribed/available APIs.
+  scopes             String[]          @default(["*"])
+  allowedIps         String[]
+  rateLimitPerMinute Int?
+  expiresAt          DateTime?
+  lastUsedAt         DateTime?
+  revokedAt          DateTime?
+  revokedById        String?           @db.Uuid
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  deletedAt          DateTime?
+  usageRecords       ApiUsageRecord[]
+
+  @@index([orgId, revokedAt])
+  @@map("customer_api_keys")
+}
+
+model ApiUsageRecord {
+  id                    String               @id @default(uuid()) @db.Uuid
+  correlationId         String               @unique
+  orgId                 String               @db.Uuid
+  org                   Organization         @relation(fields: [orgId], references: [id])
+  apiKeyId              String?              @db.Uuid
+  apiKey                CustomerApiKey?      @relation(fields: [apiKeyId], references: [id])
+  productId             String?              @db.Uuid
+  product               ApiProduct?          @relation(fields: [productId], references: [id])
+  endpointId            String?              @db.Uuid
+  endpoint              ApiEndpoint?         @relation(fields: [endpointId], references: [id])
+  providerId            String?              @db.Uuid
+  method                HttpMethod
+  path                  String
+  statusCode            Int
+  upstreamStatus        Int?
+  errorCode             String?
+  latencyMs             Int
+  upstreamLatencyMs     Int?
+  billable              Boolean              @default(false)
+  price                 Decimal              @default(0) @db.Decimal(18, 6)
+  coveredBySubscription Boolean              @default(false)
+  requestBytes          Int                  @default(0)
+  responseBytes         Int                  @default(0)
+  /// Truncated client IP (privacy): last octet zeroed.
+  clientIpPrefix        String?
+  createdAt             DateTime             @default(now())
+  supplierUsage         SupplierUsageRecord?
+
+  @@index([orgId, createdAt])
+  @@index([productId, createdAt])
+  @@index([apiKeyId, createdAt])
+  @@index([createdAt])
+  @@map("api_usage_records")
+}
+
+model SupplierUsageRecord {
+  id            String          @id @default(uuid()) @db.Uuid
+  usageRecordId String          @unique @db.Uuid
+  usageRecord   ApiUsageRecord  @relation(fields: [usageRecordId], references: [id], onDelete: Cascade)
+  providerId    String          @db.Uuid
+  provider      ApiProvider     @relation(fields: [providerId], references: [id])
+  integrationId String?         @db.Uuid
+  integration   ApiIntegration? @relation(fields: [integrationId], references: [id])
+  /// Null when no reliable cost data exists — never guessed.
+  cost          Decimal?        @db.Decimal(18, 6)
+  costIsEstimated Boolean       @default(true)
+  currency      String          @default("USD")
+  createdAt     DateTime        @default(now())
+
+  @@index([providerId, createdAt])
+  @@map("supplier_usage_records")
+}
+
+// ─────────────────────────── Operations ───────────────────────────
+
+model SupportTicket {
+  id          String          @id @default(uuid()) @db.Uuid
+  number      Int             @unique @default(autoincrement())
+  orgId       String          @db.Uuid
+  org         Organization    @relation(fields: [orgId], references: [id])
+  createdById String          @db.Uuid
+  createdBy   User            @relation("TicketCreator", fields: [createdById], references: [id])
+  subject     String
+  category    String          @default("general")
+  status      TicketStatus    @default(OPEN)
+  priority    TicketPriority  @default(NORMAL)
+  assigneeId  String?         @db.Uuid
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  messages    TicketMessage[]
+
+  @@index([orgId, status])
+  @@index([status, priority])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id         String        @id @default(uuid()) @db.Uuid
+  ticketId   String        @db.Uuid
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId   String        @db.Uuid
+  author     User          @relation(fields: [authorId], references: [id])
+  body       String
+  isInternal Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
+}
+
+/// Immutable (UPDATE blocked by DB trigger; DELETE only via retention purge).
+model AuditLog {
+  id          String        @id @default(uuid()) @db.Uuid
+  actorType   ActorType     @default(USER)
+  actorUserId String?       @db.Uuid
+  orgId       String?       @db.Uuid
+  org         Organization? @relation(fields: [orgId], references: [id])
+  action      String
+  targetType  String?
+  targetId    String?
+  ip          String?
+  userAgent   String?
+  metadata    Json          @default("{}")
+  createdAt   DateTime      @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedById String?  @db.Uuid
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model AlertRule {
+  id            String       @id @default(uuid()) @db.Uuid
+  name          String
+  metric        AlertMetric
+  threshold     Decimal      @db.Decimal(18, 6)
+  windowMinutes Int          @default(15)
+  providerId    String?      @db.Uuid
+  channel       AlertChannel @default(LOG)
+  target        String?
+  isActive      Boolean      @default(true)
+  lastFiredAt   DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  events        AlertEvent[]
+
+  @@map("alert_rules")
+}
+
+model AlertEvent {
+  id         String    @id @default(uuid()) @db.Uuid
+  ruleId     String    @db.Uuid
+  rule       AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  severity   String    @default("warning")
+  message    String
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([ruleId, createdAt])
+  @@map("alert_events")
+}
+
+model ContactMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  email     String
+  company   String?
+  topic     String   @default("general")
+  message   String
+  handled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("contact_messages")
+}
