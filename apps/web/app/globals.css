@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ze-Ze design tokens — dark navy, white, subtle blue. */
+@layer base {
+  :root {
+    --background: 220 33% 99%;
+    --foreground: 224 71% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 71% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71% 10%;
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 40% 96%;
+    --secondary-foreground: 224 64% 18%;
+    --muted: 220 30% 96%;
+    --muted-foreground: 220 12% 42%;
+    --accent: 214 95% 96%;
+    --accent-foreground: 221 83% 40%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 26 83% 14%;
+    --border: 220 24% 90%;
+    --input: 220 24% 88%;
+    --ring: 221 83% 53%;
+    --radius: 0.6rem;
+    --chart-1: 221 83% 53%;
+    --chart-2: 199 89% 48%;
+    --chart-3: 152 60% 40%;
+    --chart-4: 38 92% 50%;
+    --chart-5: 262 70% 60%;
+  }
+  .dark {
+    --background: 225 64% 6%;
+    --foreground: 214 32% 94%;
+    --card: 224 58% 9%;
+    --card-foreground: 214 32% 94%;
+    --popover: 224 58% 9%;
+    --popover-foreground: 214 32% 94%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 225 64% 8%;
+    --secondary: 222 47% 15%;
+    --secondary-foreground: 214 32% 94%;
+    --muted: 222 47% 13%;
+    --muted-foreground: 217 19% 65%;
+    --accent: 222 50% 17%;
+    --accent-foreground: 213 94% 78%;
+    --destructive: 0 63% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 55% 45%;
+    --success-foreground: 225 64% 8%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 26 83% 14%;
+    --border: 222 40% 18%;
+    --input: 222 40% 20%;
+    --ring: 217 91% 60%;
+    --chart-1: 217 91% 60%;
+    --chart-2: 199 89% 55%;
+    --chart-3: 152 55% 48%;
+    --chart-4: 38 92% 58%;
+    --chart-5: 262 75% 68%;
+  }
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+}
+
+@layer utilities {
+  .bg-grid {
+    background-image: linear-gradient(to right, hsl(var(--border) / 0.5) 1px, transparent 1px), linear-gradient(to bottom, hsl(var(--border) / 0.5) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+}

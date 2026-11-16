@@ -12,6 +12,7 @@ import { AuditService } from '../../common/audit.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { badRequest } from '../../common/http/app-error';
 import { SETTINGS_SCHEMA } from './settings';
+import { env } from '../../config/env';
 
 const id = (v: string) => uuidParam.parse(v);
 const rangeQ = z.object({
@@ -166,7 +167,13 @@ export class AdminSystemController {
   @Get('public-settings')
   async publicSettings() {
     const s = await this.loadSettings();
-    return { maintenanceBanner: s.maintenanceBanner, signupsEnabled: s.signupsEnabled };
+    return {
+      maintenanceBanner: s.maintenanceBanner,
+      signupsEnabled: s.signupsEnabled,
+      demoMode: env().DEMO_MODE || env().NODE_ENV !== 'production',
+      companyName: env().COMPANY_NAME,
+      apiPublicUrl: env().API_PUBLIC_URL,
+    };
   }
 
   private async loadSettings() {

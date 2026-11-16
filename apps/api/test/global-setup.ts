@@ -22,7 +22,7 @@ export default async function globalSetup() {
   await new Promise<void>((r) => server.listen(4011, '127.0.0.1', () => r()));
   (globalThis as { __MOCK__?: unknown }).__MOCK__ = server;
   const { PrismaClient } = await import('@prisma/client');
-  const { seedRbac, seedPlatform, seedDemo } = await import('../prisma/seed-lib');
+  const { seedRbac, seedPlatform, seedDemo } = await import('../src/seed/seed-lib');
   const prisma = new PrismaClient();
   await seedRbac(prisma);
   const { user } = await seedPlatform(prisma, {

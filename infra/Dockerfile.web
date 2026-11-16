@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+FROM node:22-bookworm-slim AS build
+RUN corepack enable
+WORKDIR /repo
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/web/package.json apps/web/
+RUN pnpm install --frozen-lockfile --filter @zeze/web... --filter @zeze/shared
+COPY packages/shared packages/shared
+COPY apps/web apps/web
+ARG NEXT_PUBLIC_COMPANY_NAME="Ze-Ze Technologies"
+ARG NEXT_PUBLIC_API_PUBLIC_URL="https://api.example.com"
+ENV NEXT_PUBLIC_COMPANY_NAME=$NEXT_PUBLIC_COMPANY_NAME NEXT_PUBLIC_API_PUBLIC_URL=$NEXT_PUBLIC_API_PUBLIC_URL NEXT_TELEMETRY_DISABLED=1
+RUN pnpm --filter @zeze/shared build && pnpm --filter @zeze/web build
+
+FROM node:22-bookworm-slim AS runtime
+RUN useradd -r -u 10001 zeze
+WORKDIR /app
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 NEXT_TELEMETRY_DISABLED=1
+COPY --from=build --chown=zeze:zeze /repo/apps/web/.next/standalone ./
+COPY --from=build --chown=zeze:zeze /repo/apps/web/.next/static ./apps/web/.next/static
+COPY --from=build --chown=zeze:zeze /repo/apps/web/public ./apps/web/public
+USER zeze
+EXPOSE 3000
+CMD ["node", "apps/web/server.js"]

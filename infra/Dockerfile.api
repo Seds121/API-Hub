@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1.7
+# Ze-Ze API Hub — NestJS API / gateway / worker / seed / (demo) mock-upstream image.
+FROM node:22-bookworm-slim AS build
+RUN corepack enable && apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /repo
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/api/package.json apps/api/
+RUN pnpm install --frozen-lockfile --filter @zeze/api... --filter @zeze/shared
+COPY packages/shared packages/shared
+COPY apps/api apps/api
+RUN pnpm --filter @zeze/shared build && pnpm --filter @zeze/api build
+# Self-contained production bundle: prod deps + compiled code + Prisma schema/migrations + generated client.
+RUN pnpm --filter @zeze/api deploy --prod --legacy /out \
+ && cp -r apps/api/dist apps/api/prisma /out/ \
+ && cd /out && ./node_modules/.bin/prisma generate --schema prisma/schema.prisma
+
+FROM node:22-bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates tini && rm -rf /var/lib/apt/lists/* \
+ && useradd -r -u 10001 zeze
+WORKDIR /app
+COPY --from=build --chown=zeze:zeze /out /app
+ENV NODE_ENV=production PORT=4000
+USER zeze
+EXPOSE 4000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD node -e "fetch('http://127.0.0.1:4000/api/health/live',{headers:{'x-forwarded-proto':'https'}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# Other commands: node dist/worker.js | node dist/cli/seed.js | node dist/cli/mock-upstream.js |
+#                 node node_modules/prisma/build/index.js migrate deploy
+CMD ["node", "dist/main.js"]

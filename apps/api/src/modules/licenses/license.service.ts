@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService, Tx } from '../../common/prisma.service';
-import { isProd } from '../../config/env';
+import { demoAllowed } from '../../config/env';
 
 export interface LicenseVerdict {
   redistributionAllowed: boolean;
@@ -43,7 +43,7 @@ export class LicenseService {
           { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
           { OR: [{ apiProductId: null }, { apiProductId: productId }] },
         ],
-        ...(isProd() ? { isDemo: false } : {}),
+        ...(demoAllowed() ? {} : { isDemo: false }),
       },
       orderBy: [{ apiProductId: { sort: 'desc', nulls: 'last' } }, { verifiedAt: 'desc' }],
     });

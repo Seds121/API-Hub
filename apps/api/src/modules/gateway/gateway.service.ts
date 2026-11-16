@@ -147,16 +147,14 @@ export class GatewayService {
         ).catch(() => undefined);
       if (rej?.headers) for (const [k, v] of Object.entries(rej.headers)) res.setHeader(k, v);
       if (!res.headersSent)
-        res
-          .status(status)
-          .json({
-            error: {
-              code,
-              message: rej?.message ?? ERROR_CODES.INTERNAL_ERROR.message,
-              ...(rej?.details !== undefined ? { details: rej.details } : {}),
-              requestId: ctx.correlationId,
-            },
-          });
+        res.status(status).json({
+          error: {
+            code,
+            message: rej?.message ?? ERROR_CODES.INTERNAL_ERROR.message,
+            ...(rej?.details !== undefined ? { details: rej.details } : {}),
+            requestId: ctx.correlationId,
+          },
+        });
     }
   }
 
@@ -307,14 +305,12 @@ export class GatewayService {
         { status: 200, billable: false, calledUpstream: false },
         money(0),
       );
-      res
-        .status(200)
-        .json(
-          endpoint.responseExample ?? {
-            sandbox: true,
-            message: 'No documented example response for this endpoint.',
-          },
-        );
+      res.status(200).json(
+        endpoint.responseExample ?? {
+          sandbox: true,
+          message: 'No documented example response for this endpoint.',
+        },
+      );
       return;
     }
 
@@ -442,11 +438,9 @@ export class GatewayService {
       });
       if (kind === 'PROVIDER_RATE_LIMIT' || kind === 'CIRCUIT_OPEN')
         res.setHeader('Retry-After', '30');
-      res
-        .status(ERROR_CODES[code].status)
-        .json({
-          error: { code, message: ERROR_CODES[code].message, requestId: ctx.correlationId },
-        });
+      res.status(ERROR_CODES[code].status).json({
+        error: { code, message: ERROR_CODES[code].message, requestId: ctx.correlationId },
+      });
       return;
     }
 
@@ -486,15 +480,13 @@ export class GatewayService {
         errorCode: 'API_UNAVAILABLE',
         billable: false,
       });
-      return res
-        .status(503)
-        .json({
-          error: {
-            code: 'API_UNAVAILABLE',
-            message: ERROR_CODES.API_UNAVAILABLE.message,
-            requestId: ctx.correlationId,
-          },
-        });
+      return res.status(503).json({
+        error: {
+          code: 'API_UNAVAILABLE',
+          message: ERROR_CODES.API_UNAVAILABLE.message,
+          requestId: ctx.correlationId,
+        },
+      });
     }
     if (s === 429) {
       await this.finish(req, res, ctx, {
@@ -504,15 +496,13 @@ export class GatewayService {
         billable: false,
       });
       res.setHeader('Retry-After', '30');
-      return res
-        .status(503)
-        .json({
-          error: {
-            code: 'UPSTREAM_UNAVAILABLE',
-            message: ERROR_CODES.UPSTREAM_UNAVAILABLE.message,
-            requestId: ctx.correlationId,
-          },
-        });
+      return res.status(503).json({
+        error: {
+          code: 'UPSTREAM_UNAVAILABLE',
+          message: ERROR_CODES.UPSTREAM_UNAVAILABLE.message,
+          requestId: ctx.correlationId,
+        },
+      });
     }
     if (s >= 400 && s < 500) {
       await this.finish(req, res, ctx, {
@@ -521,16 +511,14 @@ export class GatewayService {
         errorCode: 'UPSTREAM_REJECTED',
         billable: quote.chargeOnClientError,
       });
-      return res
-        .status(s)
-        .json({
-          error: {
-            code: 'UPSTREAM_REJECTED',
-            message: 'The upstream provider rejected the request.',
-            details: result.json ?? undefined,
-            requestId: ctx.correlationId,
-          },
-        });
+      return res.status(s).json({
+        error: {
+          code: 'UPSTREAM_REJECTED',
+          message: 'The upstream provider rejected the request.',
+          details: result.json ?? undefined,
+          requestId: ctx.correlationId,
+        },
+      });
     }
     await this.finish(req, res, ctx, {
       ...base,
@@ -538,15 +526,13 @@ export class GatewayService {
       errorCode: 'UPSTREAM_ERROR',
       billable: false,
     });
-    return res
-      .status(502)
-      .json({
-        error: {
-          code: 'UPSTREAM_ERROR',
-          message: ERROR_CODES.UPSTREAM_ERROR.message,
-          requestId: ctx.correlationId,
-        },
-      });
+    return res.status(502).json({
+      error: {
+        code: 'UPSTREAM_ERROR',
+        message: ERROR_CODES.UPSTREAM_ERROR.message,
+        requestId: ctx.correlationId,
+      },
+    });
   }
 
   private sendUpstreamBody(res: Response, status: number, r: ExecuteResult) {

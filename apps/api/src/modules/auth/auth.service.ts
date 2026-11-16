@@ -33,6 +33,14 @@ export class AuthService {
   }
 
   async register(input: RegisterInput, meta: RequestMeta) {
+    const signups = await this.prisma.systemSetting.findUnique({
+      where: { key: 'signupsEnabled' },
+    });
+    if (signups && signups.value === false)
+      throw new AppError(
+        'FORBIDDEN',
+        'New registrations are temporarily disabled. Please contact sales.',
+      );
     const exists = await this.prisma.user.findUnique({ where: { email: input.email } });
     if (exists) throw new AppError('CONFLICT', 'An account with this email already exists.');
     const passwordHash = await AuthService.hashPassword(input.password);

@@ -86,10 +86,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
     if (!res.headersSent)
-      res
-        .status(status)
-        .json({
-          error: { code, message, ...(details !== undefined ? { details } : {}), requestId },
-        });
+      res.status(status).json({
+        error: { code, message, ...(details !== undefined ? { details } : {}), requestId },
+      });
   }
 }

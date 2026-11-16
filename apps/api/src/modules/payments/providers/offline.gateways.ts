@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Payment } from '@prisma/client';
-import { env, isProd } from '../../../config/env';
+import { demoAllowed, env } from '../../../config/env';
 import { CheckoutResult, PaymentGateway, VerifiedEvent, WebhookSignatureError } from './types';
 
 /** Manual bank transfer: payment stays PENDING until an administrator verifies receipt of funds. */
@@ -27,7 +27,7 @@ export class MockGateway implements PaymentGateway {
   readonly kind = 'MOCK' as const;
   readonly label = 'Demo payment (development only)';
   isConfigured() {
-    return !isProd();
+    return demoAllowed();
   }
   async createCheckout(p: Payment): Promise<CheckoutResult> {
     return {
@@ -42,7 +42,7 @@ export class MockGateway implements PaymentGateway {
     raw: Buffer,
     headers: Record<string, string | string[] | undefined>,
   ): Promise<VerifiedEvent> {
-    if (isProd()) throw new WebhookSignatureError('Mock gateway disabled');
+    if (!demoAllowed()) throw new WebhookSignatureError('Mock gateway disabled');
     const sig = headers['x-mock-signature'];
     const expected = MockGateway.sign(raw.toString('utf8'));
     if (

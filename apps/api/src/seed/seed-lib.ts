@@ -1,9 +1,9 @@
 /* Seed helpers shared by `prisma db seed` and the test-suite. Idempotent (upserts). */
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PERMISSIONS, SYSTEM_ROLES } from '@zeze/shared';
-import { AuthService } from '../src/modules/auth/auth.service';
-import { EncryptionService } from '../src/common/crypto/encryption.service';
-import { MOCK_DIRECT_KEY, MOCK_RAPIDAPI_KEY } from '../test/mock-upstream/server';
+import { AuthService } from '../modules/auth/auth.service';
+import { EncryptionService } from '../common/crypto/encryption.service';
+import { MOCK_DIRECT_KEY, MOCK_RAPIDAPI_KEY } from '../dev/mock-upstream';
 
 export async function seedRbac(prisma: PrismaClient) {
   for (const key of Object.values(PERMISSIONS)) {

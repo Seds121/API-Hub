@@ -8,7 +8,7 @@ import { EncryptionService } from '../../common/crypto/encryption.service';
 import { AppError, badRequest, notFound } from '../../common/http/app-error';
 import type { AuthContext } from '../../common/auth-context';
 import type { RequestMeta } from '../../common/decorators';
-import { isProd } from '../../config/env';
+import { demoAllowed } from '../../config/env';
 import { CredentialStore } from '../integrations/engine/credential-store';
 import { EngineError, IntegrationEngine } from '../integrations/engine/integration-engine.service';
 import {
@@ -59,7 +59,7 @@ export class ProvidersService {
     if (!baseUrl) return undefined;
     const u = new URL(baseUrl);
     const isMock = input.isMock ?? false;
-    if (u.protocol !== 'https:' && !(isMock && !isProd()))
+    if (u.protocol !== 'https:' && !(isMock && demoAllowed()))
       throw badRequest('Provider base URL must use HTTPS.');
     if (u.username || u.password)
       throw badRequest('Do not put credentials in the base URL; add them as a credential.');
@@ -92,6 +92,55 @@ export class ProvidersService {
     });
   }
 
+  listCredentials() {
+    return this.prisma.providerCredential.findMany({
+      select: {
+        ...CREDENTIAL_PUBLIC,
+        provider: { select: { id: true, name: true, kind: true, authType: true } },
+      },
+      orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  listLicenses() {
+    return this.prisma.providerLicense.findMany({
+      include: {
+        provider: { select: { id: true, name: true } },
+        apiProduct: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  listIntegrations() {
+    return this.prisma.apiIntegration.findMany({
+      include: {
+        provider: { select: { id: true, name: true, kind: true, status: true } },
+        endpoint: {
+          select: {
+            id: true,
+            name: true,
+            method: true,
+            path: true,
+            params: true,
+            product: { select: { id: true, name: true, slug: true, status: true } },
+          },
+        },
+      },
+      orderBy: [{ updatedAt: 'desc' }],
+    });
+  }
+
+  listEndpoints() {
+    return this.prisma.apiEndpoint.findMany({
+      include: {
+        product: { select: { id: true, name: true, slug: true, status: true } },
+        _count: { select: { integrations: { where: { isActive: true } } } },
+      },
+      orderBy: [{ productId: 'asc' }, { path: 'asc' }],
+    });
+  }
+
   async get(id: string) {
     const p = await this.prisma.apiProvider.findFirst({
       where: { id, deletedAt: null },
@@ -110,6 +159,7 @@ export class ProvidersService {
                 name: true,
                 method: true,
                 path: true,
+                params: true,
                 product: { select: { id: true, name: true, slug: true } },
               },
             },
@@ -123,7 +173,7 @@ export class ProvidersService {
   }
 
   async create(input: ProviderInput, auth: AuthContext, meta: RequestMeta) {
-    if (input.isMock && isProd())
+    if (input.isMock && !demoAllowed())
       throw badRequest('Mock providers cannot be created in production.');
     const allowedHosts = this.computeHosts(input)!;
     const { additionalAllowedHosts: _a, ...data } = input;
@@ -154,7 +204,7 @@ export class ProvidersService {
   ) {
     const cur = await this.prisma.apiProvider.findFirst({ where: { id, deletedAt: null } });
     if (!cur) throw notFound('Provider');
-    if (input.isMock && isProd())
+    if (input.isMock && !demoAllowed())
       throw badRequest('Mock providers cannot be enabled in production.');
     const allowedHosts = this.computeHosts(
       {

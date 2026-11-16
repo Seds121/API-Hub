@@ -23,6 +23,30 @@ export class ProvidersController {
   }
 
   @RequirePermissions(P.PLATFORM_DASHBOARD)
+  @Get('credentials')
+  async credentials() {
+    return serialize(await this.svc.listCredentials());
+  }
+
+  @RequirePermissions(P.PLATFORM_DASHBOARD)
+  @Get('licenses')
+  async licenses() {
+    return serialize(await this.svc.listLicenses());
+  }
+
+  @RequirePermissions(P.PLATFORM_DASHBOARD)
+  @Get('integrations')
+  async integrations() {
+    return serialize(await this.svc.listIntegrations());
+  }
+
+  @RequirePermissions(P.PLATFORM_DASHBOARD)
+  @Get('endpoints')
+  async endpoints() {
+    return serialize(await this.svc.listEndpoints());
+  }
+
+  @RequirePermissions(P.PLATFORM_DASHBOARD)
   @Get('providers/:id')
   async get(@Param('id') pid: string) {
     return serialize(await this.svc.get(id(pid)));

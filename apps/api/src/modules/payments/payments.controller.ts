@@ -15,7 +15,7 @@ import {
 import type { AppRequest, AuthContext } from '../../common/auth-context';
 import { ApiZodBody, ZBody, uuidParam } from '../../common/http/zod';
 import { AppError } from '../../common/http/app-error';
-import { isProd } from '../../config/env';
+import { demoAllowed } from '../../config/env';
 import { initiatePaymentSchema, PaymentsService } from './payments.service';
 
 @ApiTags('payments')
@@ -59,7 +59,7 @@ export class PaymentsController {
     @ZBody(z.object({ outcome: z.enum(['SUCCEEDED', 'FAILED']).default('SUCCEEDED') }))
     b: { outcome: 'SUCCEEDED' | 'FAILED' },
   ) {
-    if (isProd()) throw new AppError('NOT_FOUND');
+    if (!demoAllowed()) throw new AppError('NOT_FOUND');
     return this.svc.mockComplete(orgId, uuidParam.parse(id), b.outcome);
   }
 }
@@ -87,7 +87,7 @@ export class WebhooksController {
   @HttpCode(200)
   @Post('mock')
   mock(@Req() req: AppRequest) {
-    if (isProd()) throw new AppError('NOT_FOUND');
+    if (!demoAllowed()) throw new AppError('NOT_FOUND');
     return this.svc.handleWebhook('MOCK', req.rawBody, req.headers);
   }
 }

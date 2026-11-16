@@ -133,12 +133,10 @@ export class InvoiceService {
       .lineTo(550, y + 4)
       .strokeColor('#ccd3e0')
       .stroke();
-    doc
-      .font('Helvetica-Bold')
-      .text(`Total: ${formatMoney(inv.total, inv.currency)}`, 350, y + 12, {
-        width: 200,
-        align: 'right',
-      });
+    doc.font('Helvetica-Bold').text(`Total: ${formatMoney(inv.total, inv.currency)}`, 350, y + 12, {
+      width: 200,
+      align: 'right',
+    });
     doc
       .font('Helvetica')
       .fontSize(8)

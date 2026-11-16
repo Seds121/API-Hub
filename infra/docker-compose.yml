@@ -1,0 +1,103 @@
+# Ze-Ze API Hub — single-host deployment (VPS). Run from the repo root:
+#   docker compose -f infra/docker-compose.yml --env-file .env --profile demo up -d
+# Images come from GHCR (built by .github/workflows/images.yml); add `--build` to build locally instead.
+# The "demo" profile adds the simulated suppliers used by DEMO_MODE deployments.
+name: zeze
+
+x-api-env: &apienv
+  DATABASE_URL: postgresql://zeze:${POSTGRES_PASSWORD}@postgres:5432/zeze?schema=public&connection_limit=20
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+  NODE_ENV: production
+  TRUST_PROXY: "1"
+  MOCK_UPSTREAM_URL: http://mock-upstream:4010
+
+x-api: &api
+  image: ${API_IMAGE:-ghcr.io/seds121/api-hub-api:latest}
+  build: { context: .., dockerfile: infra/Dockerfile.api }
+  env_file: ../.env
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: zeze
+      POSTGRES_USER: zeze
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U zeze"], interval: 5s, retries: 20 }
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    environment: { REDISCLI_AUTH: "${REDIS_PASSWORD}" }
+    volumes: [redisdata:/data]
+    healthcheck: { test: ["CMD-SHELL", "redis-cli ping | grep PONG"], interval: 5s, retries: 20 }
+    restart: unless-stopped
+
+  migrate:
+    <<: *api
+    command: ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
+    environment: *apienv
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+
+  api:
+    <<: *api
+    environment:
+      <<: *apienv
+      DISABLE_BACKGROUND_JOBS: "true"
+    depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
+
+  worker:
+    <<: *api
+    command: ["node", "dist/worker.js"]
+    environment: *apienv
+    depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
+
+  # Simulated suppliers for DEMO_MODE only. Internal network, never published.
+  mock-upstream:
+    <<: *api
+    profiles: ["demo"]
+    command: ["node", "dist/cli/mock-upstream.js"]
+    environment: { NODE_ENV: production, DEMO_MODE: "true", MOCK_UPSTREAM_HOST: 0.0.0.0 }
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/seds121/api-hub-web:latest}
+    build: { context: .., dockerfile: infra/Dockerfile.web }
+    environment:
+      API_INTERNAL_URL: http://api:4000
+      API_PUBLIC_URL: ${API_PUBLIC_URL:?set API_PUBLIC_URL}
+    depends_on: [api]
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["80:80", "443:443"]
+    environment:
+      APP_HOST: ${APP_HOST:?set APP_HOST}
+      API_HOST: ${API_HOST:?set API_HOST}
+      NGINX_ENVSUBST_FILTER: "^(APP_HOST|API_HOST)$$"
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - letsencrypt:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # Reload every 6h so renewed certificates are picked up.
+    command: ["/bin/sh", "-c", "(while :; do sleep 21600; nginx -s reload; done) & exec /docker-entrypoint.sh nginx -g 'daemon off;'"]
+    depends_on: [web, api]
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:v3.0.1
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 43200; done"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  letsencrypt:
+  certbot-www:

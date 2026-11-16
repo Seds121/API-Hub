@@ -3,7 +3,7 @@ import type { ApiIntegration, ApiProvider, HttpMethod } from '@prisma/client';
 import type { ParamDef } from '@zeze/shared';
 import { RedisService } from '../../../common/redis.service';
 import { EncryptionService } from '../../../common/crypto/encryption.service';
-import { env } from '../../../config/env';
+import { demoAllowed, env } from '../../../config/env';
 import { logger } from '../../../common/logging/logger';
 import { CircuitBreaker, Semaphore } from './circuit-breaker';
 import {
@@ -116,7 +116,7 @@ export class IntegrationEngine implements OnModuleDestroy {
   allowPrivate(p: ApiProvider) {
     // Private/loopback upstreams are only reachable for mock (demo) providers, only when explicitly
     // enabled, and never in production. Real providers always get full SSRF protection.
-    return p.isMock && env().GATEWAY_ALLOW_PRIVATE_UPSTREAMS && env().NODE_ENV !== 'production';
+    return p.isMock && env().GATEWAY_ALLOW_PRIVATE_UPSTREAMS && demoAllowed();
   }
 
   /** Validate customer input against the endpoint definition (exposed for the gateway to fail fast before reserving funds). */
@@ -131,7 +131,7 @@ export class IntegrationEngine implements OnModuleDestroy {
 
   async execute(p: ExecuteParams): Promise<ExecuteResult> {
     const { provider, integration } = p;
-    if (provider.isMock && env().NODE_ENV === 'production')
+    if (provider.isMock && !demoAllowed())
       throw new EngineError('CONFIG', 'Mock providers are disabled in production');
     const v = this.validate(p.params, p.input);
 
@@ -295,9 +295,7 @@ export class IntegrationEngine implements OnModuleDestroy {
    * Health probe: authenticated GET of baseUrl + healthCheckPath. 401/403 count as unhealthy
    * because they indicate a credential/subscription problem on our side.
    */
-  async probe(
-    provider: ApiProvider,
-  ): Promise<{
+  async probe(provider: ApiProvider): Promise<{
     ok: boolean;
     statusCode: number | null;
     latencyMs: number | null;

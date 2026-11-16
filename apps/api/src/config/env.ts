@@ -31,6 +31,8 @@ const schema = z.object({
   GATEWAY_MAX_BODY_BYTES: z.coerce.number().int().default(1_048_576),
   GATEWAY_RESERVATION_TTL_SECONDS: z.coerce.number().int().default(120),
   GATEWAY_ALLOW_PRIVATE_UPSTREAMS: bool.default(false),
+  /** Live demo/staging: allows mock providers, the mock payment gateway and demo seed data while keeping production hardening. */
+  DEMO_MODE: bool.default(false),
   DATA_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
   PAYMENT_PROVIDERS: z.string().default('mock,manual_bank'),
   STRIPE_SECRET_KEY: z.string().optional(),
@@ -60,8 +62,10 @@ export function env(): Env {
   }
   const e = parsed.data;
   if (e.NODE_ENV === 'production') {
-    if (e.GATEWAY_ALLOW_PRIVATE_UPSTREAMS)
-      throw new Error('GATEWAY_ALLOW_PRIVATE_UPSTREAMS must be false in production');
+    if (e.GATEWAY_ALLOW_PRIVATE_UPSTREAMS && !e.DEMO_MODE)
+      throw new Error(
+        'GATEWAY_ALLOW_PRIVATE_UPSTREAMS must be false in production unless DEMO_MODE=true',
+      );
     for (const k of ['SESSION_SECRET', 'JWT_SECRET', 'API_KEY_HMAC_SECRET'] as const) {
       if (/CHANGE_ME/i.test(e[k])) throw new Error(`${k} still has a placeholder value`);
     }
@@ -71,6 +75,8 @@ export function env(): Env {
 }
 
 export const isProd = () => env().NODE_ENV === 'production';
+/** Mock providers, demo payments and demo licenses: development, test, or an explicit DEMO_MODE deployment. */
+export const demoAllowed = () => !isProd() || env().DEMO_MODE;
 /** Resets cached env (tests only). */
 export const resetEnvCache = () => {
   cached = null;

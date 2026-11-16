@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: zeze_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/zeze_test?schema=public&connection_limit=10
+      TEST_REDIS_URL: redis://localhost:6379/1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: pnpm install --frozen-lockfile
+      - name: Build shared package
+        run: pnpm --filter @zeze/shared build
+      - name: Generate Prisma client
+        run: pnpm --filter @zeze/api prisma:generate
+      - name: Typecheck
+        run: pnpm -r typecheck
+      - name: Lint
+        run: pnpm --filter @zeze/api lint && pnpm --filter @zeze/web lint
+      - name: Shared tests
+        run: pnpm --filter @zeze/shared test
+      - name: API tests (unit + e2e against Postgres/Redis + mock upstream)
+        run: pnpm --filter @zeze/api test
+      - name: Web production build
+        run: pnpm --filter @zeze/web build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
