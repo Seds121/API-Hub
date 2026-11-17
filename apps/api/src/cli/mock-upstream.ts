@@ -9,7 +9,7 @@ if (
   process.exit(1);
 }
 const port = Number(process.env.MOCK_UPSTREAM_PORT ?? 4010);
-const host = process.env.MOCK_UPSTREAM_HOST ?? '0.0.0.0';
+const host = process.env.MOCK_UPSTREAM_HOST ?? '127.0.0.1';
 createMockUpstream().server.listen(port, host, () =>
   console.warn(`[mock-upstream] DEMO ONLY — listening on http://${host}:${port}`),
 );

@@ -17,7 +17,7 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:seed": "ts-node --transpile-only prisma/seed.ts",
     "seed:prod": "node dist/cli/seed.js",
-    "mock-upstream": "MOCK_UPSTREAM_HOST=127.0.0.1 ts-node --transpile-only src/cli/mock-upstream.ts"
+    "mock-upstream": "ts-node --transpile-only src/cli/mock-upstream.ts"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"
