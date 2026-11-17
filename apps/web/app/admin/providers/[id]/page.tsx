@@ -18,23 +18,23 @@ import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ProviderForm } from '@/components/admin/provider-form';
+import { connectorDef, type CredentialKindName } from '@zeze/shared';
+import { Rocket } from 'lucide-react';
 import { IntegrationTester } from '@/components/admin/integration-dialogs';
 import { call, useAction, useApi } from '@/lib/query';
 import type { Integration, License, Provider } from '@/lib/admin-types';
 import type { ParamDef } from '@/lib/types';
 import { date, money, relative } from '@/lib/utils';
 
-const SECRET_FIELDS: Record<string, { key: string; label: string; type?: string }[]> = {
-  API_KEY: [{ key: 'apiKey', label: 'API key', type: 'password' }],
-  BEARER_TOKEN: [{ key: 'token', label: 'Bearer token', type: 'password' }],
-  BASIC: [{ key: 'username', label: 'Username' }, { key: 'password', label: 'Password', type: 'password' }],
-  OAUTH2_CLIENT: [{ key: 'clientId', label: 'Client ID' }, { key: 'clientSecret', label: 'Client secret', type: 'password' }],
-  HEADERS: [{ key: 'headers', label: 'Headers JSON, e.g. {"X-Auth":"…"}', type: 'password' }],
-};
 
 function CredentialDialog({ provider, onClose }: { provider: Provider; onClose: () => void }) {
-  const defaultKind = provider.kind === 'RAPIDAPI' || provider.authType === 'API_KEY' ? 'API_KEY' : provider.authType === 'BEARER' ? 'BEARER_TOKEN' : provider.authType === 'BASIC' ? 'BASIC' : provider.authType === 'OAUTH2' ? 'OAUTH2_CLIENT' : 'HEADERS';
-  const [kind, setKind] = useState(defaultKind);
+  // Credential kinds + field labels come from the connector registry (e.g. "Brave API key").
+  const def = connectorDef(provider.kind);
+  const fromAuth: Record<string, CredentialKindName> = { API_KEY: 'API_KEY', BEARER: 'BEARER_TOKEN', BASIC: 'BASIC', OAUTH2: 'OAUTH2_CLIENT', CUSTOM_HEADERS: 'HEADERS' };
+  const preferred = fromAuth[provider.authType];
+  const defaultKind = preferred && def.credential.kinds.includes(preferred) ? preferred : def.credential.kinds[0]!;
+  const [kind, setKind] = useState<CredentialKindName>(defaultKind);
+  const fields = def.credential.fields[kind] ?? [];
   const [label, setLabel] = useState('Primary');
   const [secret, setSecret] = useState<Record<string, string>>({});
   const [expiresAt, setExpiresAt] = useState('');
@@ -46,7 +46,7 @@ function CredentialDialog({ provider, onClose }: { provider: Provider; onClose: 
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add supplier credential</DialogTitle>
-          <DialogDescription>Encrypted with AES-256-GCM on the server. It can never be viewed again — only replaced. Never paste customer keys here.</DialogDescription>
+          <DialogDescription>{def.credential.help} Encrypted with AES-256-GCM on the server; it can never be viewed again — only replaced. Never paste customer keys here.</DialogDescription>
         </DialogHeader>
         <form
           className="grid gap-4"
@@ -67,10 +67,10 @@ function CredentialDialog({ provider, onClose }: { provider: Provider; onClose: 
         >
           <div className="grid grid-cols-2 gap-4">
             <Field label="Label" htmlFor="cl"><Input id="cl" value={label} onChange={(e) => setLabel(e.target.value)} /></Field>
-            <Field label="Type"><Select value={kind} onValueChange={(k) => (setKind(k), setSecret({}))} options={Object.keys(SECRET_FIELDS).map((k) => ({ value: k, label: k.replace('_', ' ') }))} /></Field>
+            <Field label="Type"><Select value={kind} disabled={def.credential.kinds.length === 1} onValueChange={(k) => (setKind(k as CredentialKindName), setSecret({}))} options={def.credential.kinds.map((k) => ({ value: k, label: k.replace('_', ' ') }))} /></Field>
           </div>
-          {SECRET_FIELDS[kind]!.map((f) => (
-            <Field key={f.key} label={f.label} htmlFor={`s-${f.key}`}><Input id={`s-${f.key}`} type={f.type ?? 'text'} autoComplete="new-password" value={secret[f.key] ?? ''} onChange={(e) => setSecret({ ...secret, [f.key]: e.target.value })} /></Field>
+          {fields.map((f) => (
+            <Field key={f.key} label={f.label} htmlFor={`s-${f.key}`}><Input id={`s-${f.key}`} type={f.secret ? 'password' : 'text'} autoComplete="new-password" value={secret[f.key] ?? ''} onChange={(e) => setSecret({ ...secret, [f.key]: e.target.value })} /></Field>
           ))}
           <Field label="Expires" hint="Optional — from the supplier subscription" htmlFor="ce"><Input id="ce" type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} /></Field>
           <label className="flex items-center gap-3 text-sm"><Switch checked={keepPrevious} onCheckedChange={setKeepPrevious} /> Keep previous credentials active (otherwise rotate)</label>
@@ -142,6 +142,36 @@ function SubscriptionDialog({ provider, onClose }: { provider: Provider; onClose
   );
 }
 
+/** Connector templates (registry) → one-click DRAFT API bound to this provider. Publishing still needs license + price. */
+function QuickStart({ provider }: { provider: Provider }) {
+  const router = useRouter();
+  const def = connectorDef(provider.kind);
+  const create = useAction((templateId: string) => call<{ productId: string; suggestedPricePerRequest: string }>(`/api/admin/providers/${provider.id}/templates/${templateId}`, { method: 'POST' }), {
+    success: (r) => `Draft API created. Next: record the license, set a price (suggested $${r.suggestedPricePerRequest}/request), test and publish.`,
+    invalidate: [['admin-provider', provider.id], ['admin-products']],
+    onSuccess: (r) => router.push(`/admin/products/${r.productId}`),
+  });
+  if (!def.templates.length) return null;
+  return (
+    <Card className="mb-6 border-primary/30">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Rocket className="h-4 w-4" /> Quick start</CardTitle>
+        <CardDescription>Create a ready-made {def.label} API as a draft. It is not published until a verified redistribution license and a price exist.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 sm:grid-cols-2">
+        {def.templates.map((t) => (
+          <div key={t.id} className="flex flex-col gap-2 rounded-lg border p-4">
+            <p className="font-medium">{t.label}</p>
+            <p className="text-xs text-muted-foreground">{t.description}</p>
+            <p className="font-mono text-xs">/v1/{t.product.slug}{t.endpoint.path}</p>
+            <Button size="sm" className="mt-auto w-fit" loading={create.isPending} onClick={() => create.mutate(t.id)}>Create draft API from template</Button>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function ProviderDetail() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -165,7 +195,7 @@ export default function ProviderDetail() {
             <PageHeader
               title={p.name}
               badge={<><StatusBadge status={p.status} />{p.isMock && <Badge variant="warning">mock</Badge>}</>}
-              description={<span className="font-mono text-xs">{p.kind === 'RAPIDAPI' ? 'RapidAPI' : 'Direct REST'} · {p.baseUrl} · circuit {p.circuit?.state.toLowerCase()}</span>}
+              description={<span className="font-mono text-xs">{connectorDef(p.kind).label} · {p.baseUrl} · circuit {p.circuit?.state.toLowerCase()}</span>}
               actions={
                 <>
                   <Button variant="outline" onClick={() => health.mutate()} loading={health.isPending}><HeartPulse /> Health check</Button>
@@ -174,6 +204,7 @@ export default function ProviderDetail() {
                 </>
               }
             />
+            <QuickStart provider={p} />
             <Tabs defaultValue="credentials">
               <TabsList className="flex-wrap">
                 <TabsTrigger value="credentials">Credentials</TabsTrigger>
@@ -240,7 +271,7 @@ export default function ProviderDetail() {
                 <Card>
                   <CardHeader><CardTitle>Configuration</CardTitle><CardDescription>Allowed hosts: {p.allowedHosts.join(', ')}</CardDescription></CardHeader>
                   <CardContent className="grid gap-2 text-sm sm:grid-cols-2">
-                    {[['Auth', p.kind === 'RAPIDAPI' ? 'X-RapidAPI-Key + X-RapidAPI-Host' : p.authType], ['Timeout', `${p.timeoutMs} ms`], ['Retries', `${p.retryMaxAttempts} (backoff ${p.retryBackoffMs} ms, on ${p.retryOnStatuses.join(', ')})`], ['Max concurrency', p.maxConcurrency], ['Supplier rate limit', p.rateLimitPerMinute ? `${p.rateLimitPerMinute}/min` : 'none'], ['Health path', p.healthCheckPath ?? '—']].map(([k, v]) => (
+                    {[['Auth', connectorDef(p.kind).fixedAuthType ? connectorDef(p.kind).authSummary : p.authType], ['Timeout', `${p.timeoutMs} ms`], ['Retries', `${p.retryMaxAttempts} (backoff ${p.retryBackoffMs} ms, on ${p.retryOnStatuses.join(', ')})`], ['Max concurrency', p.maxConcurrency], ['Supplier rate limit', p.rateLimitPerMinute ? `${p.rateLimitPerMinute}/min` : 'none'], ['Health path', p.healthCheckPath ?? '—']].map(([k, v]) => (
                       <div key={String(k)} className="flex justify-between gap-4 rounded-md bg-muted/50 px-3 py-2"><span className="text-muted-foreground">{k}</span><span className="text-right font-medium">{v}</span></div>
                     ))}
                   </CardContent>

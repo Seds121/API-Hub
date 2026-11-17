@@ -1,6 +1,6 @@
 /* Seed helpers shared by `prisma db seed` and the test-suite. Idempotent (upserts). */
 import { Prisma, PrismaClient } from '@prisma/client';
-import { PERMISSIONS, SYSTEM_ROLES } from '@zeze/shared';
+import { connectorDef, PERMISSIONS, SYSTEM_ROLES } from '@zeze/shared';
 import { AuthService } from '../modules/auth/auth.service';
 import { EncryptionService } from '../common/crypto/encryption.service';
 import { MOCK_DIRECT_KEY, MOCK_RAPIDAPI_KEY } from '../dev/mock-upstream';
@@ -895,4 +895,94 @@ export async function seedDemo(
     });
   }
   return { social, acme, agency, providers: { rapid, direct, biz, ai } };
+}
+
+/**
+ * Optional REAL Brave Search provider for local development / DEMO_MODE — only when a Brave API key is
+ * supplied (BRAVE_API_KEY). No fake Brave responses are ever seeded. The key is stored encrypted in the
+ * credential store exactly as an admin would via Admin → Credentials; the env var is just a convenience.
+ * The license is a demo license (ignored in real production).
+ */
+export async function seedBrave(
+  prisma: PrismaClient,
+  opts: { apiKey: string; adminUserId: string; pricePerRequest?: string },
+) {
+  const { createProductFromTemplate } = await import('../modules/catalog/template-factory');
+  const enc = new EncryptionService();
+  const def = connectorDef('BRAVE');
+  let provider = await prisma.apiProvider.findUnique({ where: { slug: 'brave-search' } });
+  if (!provider) {
+    const baseUrl = def.defaultBaseUrl!;
+    provider = await prisma.apiProvider.create({
+      data: {
+        slug: 'brave-search',
+        name: 'Brave Search',
+        kind: 'BRAVE',
+        description: def.description,
+        website: 'https://brave.com/search/api/',
+        baseUrl,
+        allowedHosts: [new URL(baseUrl).hostname],
+        authType: def.fixedAuthType ?? 'API_KEY',
+        authConfig: {},
+        timeoutMs: def.defaults?.timeoutMs ?? 10000,
+        rateLimitPerMinute: def.defaults?.rateLimitPerMinute ?? 60,
+        isMock: false,
+      },
+    });
+  }
+  if (
+    !(await prisma.providerCredential.count({ where: { providerId: provider.id, isActive: true } }))
+  ) {
+    await prisma.providerCredential.create({
+      data: {
+        providerId: provider.id,
+        label: 'Brave API key (seeded from BRAVE_API_KEY)',
+        kind: 'API_KEY',
+        ...enc.encryptJson({ apiKey: opts.apiKey }, `provider:${provider.id}`),
+        hint: opts.apiKey.length >= 8 ? `••••${opts.apiKey.slice(-4)}` : '••••',
+        createdById: opts.adminUserId,
+      },
+    });
+  }
+  if (!(await prisma.providerLicense.count({ where: { providerId: provider.id } }))) {
+    await prisma.providerLicense.create({
+      data: {
+        providerId: provider.id,
+        status: 'VERIFIED',
+        redistributionAllowed: true,
+        subResaleAllowed: false,
+        isDemo: true,
+        documentRef: 'DEMO — confirm Brave Search API resale terms before production',
+        evidenceNotes:
+          'Seeded demo license for local development / DEMO_MODE. Ignored in production.',
+        verifiedById: opts.adminUserId,
+        verifiedAt: new Date(),
+      },
+    });
+  }
+  let product = await prisma.apiProduct.findUnique({ where: { slug: 'brave-web-search' } });
+  if (!product) {
+    const r = await prisma.$transaction((tx) =>
+      createProductFromTemplate(tx, {
+        providerId: provider!.id,
+        templateId: 'brave-web-search',
+        isDemo: true,
+      }),
+    );
+    product = r.product;
+    await prisma.pricingRule.create({
+      data: {
+        scope: 'PRODUCT_DEFAULT',
+        productId: product.id,
+        pricePerRequest: new Prisma.Decimal(
+          opts.pricePerRequest ?? r.template.suggestedPricePerRequest,
+        ),
+      },
+    });
+    product = await prisma.apiProduct.update({
+      where: { id: product.id },
+      data: { status: 'PUBLISHED', publishedAt: new Date() },
+    });
+  }
+  return { provider, product };
 }

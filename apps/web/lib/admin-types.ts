@@ -1,3 +1,5 @@
+import type { ConnectorKind } from '@zeze/shared';
+
 export interface Overview {
   totalCustomers: number;
   activeCustomers: number;
@@ -19,7 +21,7 @@ export interface Provider {
   id: string;
   name: string;
   slug: string;
-  kind: 'RAPIDAPI' | 'DIRECT_REST';
+  kind: ConnectorKind;
   description: string | null;
   website: string | null;
   baseUrl: string;

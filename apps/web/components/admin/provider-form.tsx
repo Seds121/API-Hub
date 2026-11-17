@@ -6,6 +6,8 @@ import { Input, Textarea } from '../ui/input';
 import { Select } from '../ui/select';
 import { Switch } from '../ui/switch';
 import type { Provider } from '@/lib/admin-types';
+import { CONNECTOR_KINDS, connectorDef, type ConnectorKind } from '@zeze/shared';
+import { Info } from 'lucide-react';
 
 export type ProviderInput = Record<string, unknown>;
 
@@ -24,7 +26,7 @@ export function ProviderForm({ initial, onSubmit, submitting }: { initial?: Part
   const [v, setV] = useState({
     name: initial?.name ?? '',
     slug: initial?.slug ?? '',
-    kind: initial?.kind ?? 'RAPIDAPI',
+    kind: (initial?.kind ?? 'RAPIDAPI') as ConnectorKind,
     description: initial?.description ?? '',
     website: initial?.website ?? '',
     baseUrl: initial?.baseUrl ?? '',
@@ -48,7 +50,21 @@ export function ProviderForm({ initial, onSubmit, submitting }: { initial?: Part
   });
   const [err, setErr] = useState<string | null>(null);
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setV({ ...v, [k]: e.target.value });
-  const rapid = v.kind === 'RAPIDAPI';
+  const def = connectorDef(v.kind);
+  const rapid = def.formHints.showRapidApiHost;
+  const authChoosable = def.formHints.showAuthMethod;
+  /** Switching connector pre-fills registry defaults without overwriting values the admin typed. */
+  const chooseKind = (k: ConnectorKind) => {
+    const next = connectorDef(k);
+    const prevDefault = connectorDef(v.kind).defaultBaseUrl;
+    setV({
+      ...v,
+      kind: k,
+      baseUrl: !v.baseUrl || v.baseUrl === prevDefault ? (next.defaultBaseUrl ?? '') : v.baseUrl,
+      timeoutMs: next.defaults?.timeoutMs && !initial?.id ? String(next.defaults.timeoutMs) : v.timeoutMs,
+      rateLimitPerMinute: next.defaults?.rateLimitPerMinute && !v.rateLimitPerMinute && !initial?.id ? String(next.defaults.rateLimitPerMinute) : v.rateLimitPerMinute,
+    });
+  };
   return (
     <form
       className="grid gap-4"
@@ -62,8 +78,8 @@ export function ProviderForm({ initial, onSubmit, submitting }: { initial?: Part
         }
         const authConfig: Record<string, string> = {};
         if (rapid && v.rapidApiHost) authConfig.rapidApiHost = v.rapidApiHost;
-        if (!rapid && v.authType === 'API_KEY') Object.assign(authConfig, { in: v.keyIn, ...(v.keyName ? { name: v.keyName } : {}) });
-        if (!rapid && v.authType === 'OAUTH2') Object.assign(authConfig, { tokenUrl: v.tokenUrl, ...(v.scope ? { scope: v.scope } : {}) });
+        if (authChoosable && v.authType === 'API_KEY') Object.assign(authConfig, { in: v.keyIn, ...(v.keyName ? { name: v.keyName } : {}) });
+        if (authChoosable && v.authType === 'OAUTH2') Object.assign(authConfig, { tokenUrl: v.tokenUrl, ...(v.scope ? { scope: v.scope } : {}) });
         setErr(null);
         onSubmit({
           name: v.name,
@@ -73,7 +89,7 @@ export function ProviderForm({ initial, onSubmit, submitting }: { initial?: Part
           website: v.website || null,
           baseUrl: v.baseUrl,
           additionalAllowedHosts: v.additionalAllowedHosts.split(/[\s,]+/).filter(Boolean),
-          authType: rapid ? 'API_KEY' : v.authType,
+          authType: def.fixedAuthType ?? v.authType,
           authConfig,
           defaultHeaders: headers,
           timeoutMs: Number(v.timeoutMs),
@@ -94,17 +110,27 @@ export function ProviderForm({ initial, onSubmit, submitting }: { initial?: Part
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Connector type">
-          <Select value={v.kind} onValueChange={(k) => setV({ ...v, kind: k as 'RAPIDAPI' | 'DIRECT_REST' })} options={[{ value: 'RAPIDAPI', label: 'RapidAPI listing' }, { value: 'DIRECT_REST', label: 'Direct REST provider' }]} />
+          <Select value={v.kind} onValueChange={(k) => chooseKind(k as ConnectorKind)} options={CONNECTOR_KINDS.map((k) => ({ value: k, label: connectorDef(k).label }))} />
         </Field>
         <Field label="Status">
           <Select value={v.status} onValueChange={(s) => setV({ ...v, status: s })} options={['ACTIVE', 'DEGRADED', 'DOWN', 'DISABLED'].map((s) => ({ value: s, label: s }))} />
         </Field>
       </div>
-      <Field label="Base URL" hint={rapid ? 'e.g. https://example-api.p.rapidapi.com — every RapidAPI listing has its own host and paths.' : 'HTTPS only. Endpoint paths are appended to this.'} htmlFor="pb">
+      {def.formHints.onboarding.length > 0 && (
+        <div className="space-y-1 rounded-md border border-primary/30 bg-accent/50 p-3 text-xs" role="note">
+          <p className="flex items-center gap-1.5 font-medium text-accent-foreground"><Info className="h-3.5 w-3.5" /> {def.label}: {def.authSummary}</p>
+          <ul className="list-disc space-y-0.5 pl-5 text-muted-foreground">
+            {def.formHints.onboarding.map((t) => <li key={t}>{t}</li>)}
+          </ul>
+        </div>
+      )}
+      <Field label="Base URL" hint={def.formHints.baseUrlHelp} htmlFor="pb">
         <Input id="pb" required type="url" value={v.baseUrl} onChange={set('baseUrl')} />
       </Field>
       {rapid ? (
         <Field label="X-RapidAPI-Host" hint="Defaults to the base URL host." htmlFor="rh"><Input id="rh" value={v.rapidApiHost} onChange={set('rapidApiHost')} /></Field>
+      ) : !authChoosable ? (
+        <p className="text-xs text-muted-foreground">Authentication: <strong>{def.authSummary}</strong> — {def.credential.help}</p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Auth method">

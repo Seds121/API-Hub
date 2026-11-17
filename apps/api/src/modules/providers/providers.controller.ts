@@ -6,7 +6,9 @@ import { Auth, ReqMeta, RequestMeta, RequirePermissions } from '../../common/dec
 import type { AuthContext } from '../../common/auth-context';
 import { ApiZodBody, ZBody, uuidParam } from '../../common/http/zod';
 import { serialize } from '../../common/http/pagination';
+import { badRequest } from '../../common/http/app-error';
 import { ProvidersService } from './providers.service';
+import { CatalogService } from '../catalog/catalog.service';
 import * as S from './providers.schemas';
 
 const id = (v: string) => uuidParam.parse(v);
@@ -14,12 +16,34 @@ const id = (v: string) => uuidParam.parse(v);
 @ApiTags('admin: providers')
 @Controller('api/admin')
 export class ProvidersController {
-  constructor(private readonly svc: ProvidersService) {}
+  constructor(
+    private readonly svc: ProvidersService,
+    private readonly catalog: CatalogService,
+  ) {}
 
   @RequirePermissions(P.PLATFORM_DASHBOARD)
   @Get('providers')
   async list(@Query('q') q?: string) {
     return serialize(await this.svc.list(q));
+  }
+
+  /** Connector registry (labels, defaults, credential fields, templates) for the admin UI. */
+  @RequirePermissions(P.PLATFORM_DASHBOARD)
+  @Get('connectors')
+  connectors() {
+    return this.svc.connectors();
+  }
+
+  @RequirePermissions(P.PLATFORM_CATALOG_WRITE)
+  @Post('providers/:id/templates/:templateId')
+  createFromTemplate(
+    @Param('id') pid: string,
+    @Param('templateId') tid: string,
+    @Auth() a: AuthContext,
+    @ReqMeta() m: RequestMeta,
+  ) {
+    if (!/^[a-z0-9-]{1,60}$/.test(tid)) throw badRequest('Invalid template id');
+    return this.catalog.createFromTemplate(id(pid), tid, a, m);
   }
 
   @RequirePermissions(P.PLATFORM_DASHBOARD)

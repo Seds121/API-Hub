@@ -8,6 +8,8 @@ import { URL } from 'url';
 
 export const MOCK_RAPIDAPI_KEY = 'mock-rapidapi-key-for-dev-only';
 export const MOCK_DIRECT_KEY = 'mock-direct-key-for-dev-only';
+/** TEST FIXTURE ONLY: emulates Brave's auth contract for e2e tests. Never seeded as a product. */
+export const MOCK_BRAVE_KEY = 'mock-brave-key-for-tests-only';
 
 type Handler = (
   req: http.IncomingMessage,
@@ -99,6 +101,40 @@ export function createMockUpstream(): { server: http.Server; stats: MockStats } 
       };
     },
     // Business data lookup (bearer)
+    // Test-only Brave-shaped route (X-Subscription-Token auth). Real Brave is used when a key is configured.
+    'GET /res/v1/web/search': (req, url) => {
+      if (req.headers['x-subscription-token'] !== MOCK_BRAVE_KEY)
+        // Mirrors real Brave: an invalid key is a 422, not a 401.
+        return {
+          status: 422,
+          body: {
+            type: 'ErrorResponse',
+            error: {
+              status: 422,
+              detail: 'The provided API key is invalid.',
+              meta: { component: 'authentication' },
+              code: 'SUBSCRIPTION_TOKEN_INVALID',
+            },
+          },
+        };
+      const q = url.searchParams.get('q');
+      if (!q)
+        return { status: 422, body: { type: 'ErrorResponse', error: { code: 'VALIDATION' } } };
+      return {
+        status: 200,
+        body: {
+          _mock: true,
+          type: 'search',
+          query: { original: q },
+          web: {
+            type: 'search',
+            results: [
+              { title: `Result for ${q}`, url: 'https://example.com', description: 'Mock snippet' },
+            ],
+          },
+        },
+      };
+    },
     'GET /companies/search': (req, url) => {
       if (req.headers.authorization !== `Bearer ${MOCK_DIRECT_KEY}`)
         return { status: 401, body: { error: 'unauthorized' } };

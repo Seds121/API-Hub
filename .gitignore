@@ -13,3 +13,6 @@ test-results/
 apps/api/storage/
 *.tsbuildinfo
 next-env.d.ts
+
+# local redis snapshots
+dump.rdb

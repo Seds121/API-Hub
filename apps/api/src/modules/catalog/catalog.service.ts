@@ -11,6 +11,7 @@ import { env } from '../../config/env';
 import { LicenseService } from '../licenses/license.service';
 import { PricingService } from '../pricing/pricing.service';
 import { buildProductOpenApi } from './openapi';
+import { createProductFromTemplate, nextInternalCode } from './template-factory';
 import * as S from './catalog.schemas';
 
 const json = (v: unknown) =>
@@ -295,18 +296,31 @@ export class CatalogService {
     return { ...p, licensing: await this.licenses.productLicensed(p.id) };
   }
 
-  private async nextInternalCode(tx: Prisma.TransactionClient) {
-    const n = await tx.apiProduct.count();
-    for (let i = n + 1; ; i++) {
-      const code = `ZZ-API-${String(i).padStart(4, '0')}`;
-      if (!(await tx.apiProduct.findUnique({ where: { internalCode: code } }))) return code;
-    }
+  /** One-click DRAFT product from a connector template (see packages/shared/src/connectors.ts). */
+  async createFromTemplate(providerId: string, templateId: string, a: AuthContext, m: RequestMeta) {
+    const r = await this.prisma.$transaction((tx) =>
+      createProductFromTemplate(tx, { providerId, templateId }),
+    );
+    await this.audit.record({
+      action: 'product.create_from_template',
+      actor: a,
+      targetType: 'ApiProduct',
+      targetId: r.product.id,
+      metadata: { providerId, templateId, slug: r.product.slug },
+      meta: m,
+    });
+    return {
+      productId: r.product.id,
+      slug: r.product.slug,
+      internalCode: r.product.internalCode,
+      suggestedPricePerRequest: r.template.suggestedPricePerRequest,
+    };
   }
 
   async createProduct(b: z.infer<typeof S.productSchema>, a: AuthContext, m: RequestMeta) {
     const p = await this.prisma.$transaction(async (tx) =>
       tx.apiProduct.create({
-        data: { ...b, internalCode: await this.nextInternalCode(tx), status: 'DRAFT' },
+        data: { ...b, internalCode: await nextInternalCode(tx), status: 'DRAFT' },
       }),
     );
     await this.audit.record({

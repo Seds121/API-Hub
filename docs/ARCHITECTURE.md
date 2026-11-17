@@ -30,6 +30,9 @@
 | `agency` | Subaccounts, transfers, subaccount keys, resale pricing, reports |
 | `support`, `admin`, `jobs` | Tickets and contact, back office, background jobs |
 
+## Connector registry
+Upstream connectors are pluggable. `packages/shared/src/connectors.ts` is the single registry, and both the API and the web read it. Each entry has a label, default base URL, fixed auth semantics, accepted credential kinds and labels, admin form hints and one-click product templates. Each `ProviderKind` has exactly one `ProviderAdapter` (`RapidApiAdapter`, `DirectRestAdapter`, `BraveAdapter`, …) in a `Record<ProviderKind, ProviderAdapter>`, so an unregistered kind fails the build. Adapters only add auth material; everything else (URL building from admin config, validation, SSRF, retries, breakers, quotas, licensing, billing) is shared. See [PROVIDERS.md](PROVIDERS.md#adding-a-new-connector-type).
+
 ## Gateway pipeline
 1. Correlation id (`X-Request-Id`).
 2. API key: prefix lookup (Redis-cached 60s), then a constant-time HMAC compare; revocation, expiry and IP allowlist checks.

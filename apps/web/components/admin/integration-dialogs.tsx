@@ -12,6 +12,7 @@ import { HttpStatus } from '../status-badge';
 import { call, useAction, useApi } from '@/lib/query';
 import type { Integration, Provider } from '@/lib/admin-types';
 import type { ParamDef } from '@/lib/types';
+import { connectorDef } from '@zeze/shared';
 
 const parse = (s: string, label: string) => {
   if (!s.trim()) return undefined;
@@ -82,7 +83,7 @@ export function IntegrationEditor({ open, onOpenChange, endpointId, initial, inv
           }}
         >
           <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Provider" className="sm:col-span-2"><Select value={v.providerId} onValueChange={(p) => setV({ ...v, providerId: p })} placeholder="Select provider" options={(providers.data ?? []).map((p) => ({ value: p.id, label: `${p.name} (${p.kind === 'RAPIDAPI' ? 'RapidAPI' : 'Direct'})` }))} /></Field>
+            <Field label="Provider" className="sm:col-span-2"><Select value={v.providerId} onValueChange={(p) => setV({ ...v, providerId: p })} placeholder="Select provider" options={(providers.data ?? []).map((p) => ({ value: p.id, label: `${p.name} (${connectorDef(p.kind).shortLabel})` }))} /></Field>
             <Field label="Priority" hint="0 = primary; higher = failover" htmlFor="ip"><Input id="ip" type="number" min={0} value={v.priority} onChange={set('priority')} /></Field>
           </div>
           <div className="grid gap-4 sm:grid-cols-4">

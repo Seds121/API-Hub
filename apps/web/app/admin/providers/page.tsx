@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ProviderForm } from '@/components/admin/provider-form';
+import { connectorDef } from '@zeze/shared';
 import { call, useAction, useApi } from '@/lib/query';
 import type { Provider } from '@/lib/admin-types';
 import { date, relative } from '@/lib/utils';
@@ -22,7 +23,7 @@ export default function ProvidersPage() {
   const create = useAction((b: object) => call<Provider>('/api/admin/providers', { method: 'POST', body: b }), { success: 'Provider created — add a credential and a license next', invalidate: [['admin-providers']], onSuccess: (p) => router.push(`/admin/providers/${p.id}`) });
   return (
     <>
-      <PageHeader title="API providers" description="Suppliers we buy authorized access from: RapidAPI listings and direct REST providers." actions={<Button onClick={() => setOpen(true)}><Plus /> Add provider</Button>} />
+      <PageHeader title="API providers" description="Suppliers we buy authorized access from: RapidAPI listings, named connectors (e.g. Brave Search) and direct REST providers. Supplier keys live in encrypted credentials — customers only ever use their own app keys." actions={<Button onClick={() => setOpen(true)}><Plus /> Add provider</Button>} />
       <QueryView q={q}>
         {(rows) => (
           <DataTable
@@ -33,7 +34,7 @@ export default function ProvidersPage() {
             empty={{ title: 'No providers yet' }}
             columns={[
               { header: 'Provider', searchValue: (p) => `${p.name} ${p.slug} ${p.baseUrl}`, cell: (p) => (<div><Link href={`/admin/providers/${p.id}`} className="font-medium hover:underline">{p.name}</Link>{p.isMock && <Badge variant="warning" className="ml-2">mock</Badge>}<p className="font-mono text-xs text-muted-foreground">{p.baseUrl}</p></div>) },
-              { header: 'Type', cell: (p) => <Badge variant="secondary">{p.kind === 'RAPIDAPI' ? 'RapidAPI' : `Direct · ${p.authType}`}</Badge> },
+              { header: 'Type', cell: (p) => { const d = connectorDef(p.kind); return <Badge variant={d.fixedAuthType ? 'default' : 'secondary'}>{d.fixedAuthType ? d.shortLabel : `${d.shortLabel} · ${p.authType}`}</Badge>; } },
               { header: 'Status', cell: (p) => <StatusBadge status={p.status} /> },
               { header: 'Credential', cell: (p) => (p.credentials.length ? <span className="font-mono text-xs">{p.credentials[0]!.hint}</span> : <Badge variant="destructive">missing</Badge>) },
               { header: 'License', cell: (p) => { const l = p.licenses.find((x) => x.status === 'VERIFIED' && x.redistributionAllowed); return l ? <Badge variant="success">resale OK{l.isDemo ? ' (demo)' : ''}</Badge> : <Badge variant="destructive">not verified</Badge>; } },

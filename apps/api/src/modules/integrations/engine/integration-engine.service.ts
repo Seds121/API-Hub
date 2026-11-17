@@ -1,6 +1,6 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import type { ApiIntegration, ApiProvider, HttpMethod } from '@prisma/client';
-import type { ParamDef } from '@zeze/shared';
+import type { ApiIntegration, ApiProvider, HttpMethod, ProviderKind } from '@prisma/client';
+import { connectorDef, type ParamDef } from '@zeze/shared';
 import { RedisService } from '../../../common/redis.service';
 import { EncryptionService } from '../../../common/crypto/encryption.service';
 import { demoAllowed, env } from '../../../config/env';
@@ -30,6 +30,7 @@ import {
 } from '../adapters/types';
 import { RapidApiAdapter } from '../adapters/rapidapi.adapter';
 import { DirectRestAdapter } from '../adapters/direct-rest.adapter';
+import { BraveAdapter } from '../adapters/brave.adapter';
 
 export type EngineFailureKind =
   | 'VALIDATION'
@@ -77,16 +78,26 @@ export interface ExecuteResult {
   raw: Buffer;
   upstreamLatencyMs: number;
   attempts: number;
+  /** The supplier rejected OUR credential (401/403, or a connector-specific signal). Never the customer's fault. */
+  credentialRejected: boolean;
 }
 
 const IDEMPOTENT: HttpMethod[] = ['GET', 'PUT', 'DELETE'];
 
 @Injectable()
 export class IntegrationEngine implements OnModuleDestroy {
-  private readonly adapters = new Map<string, ProviderAdapter>([
-    ['RAPIDAPI', new RapidApiAdapter()],
-    ['DIRECT_REST', new DirectRestAdapter()],
-  ]);
+  /**
+   * Connector adapters, one per ProviderKind. Typed as a full Record so adding a ProviderKind
+   * enum value without registering its adapter fails the build (see docs/PROVIDERS.md).
+   */
+  private static readonly ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
+    RAPIDAPI: new RapidApiAdapter(),
+    DIRECT_REST: new DirectRestAdapter(),
+    BRAVE: new BraveAdapter(),
+  };
+  private readonly adapters = new Map<string, ProviderAdapter>(
+    Object.entries(IntegrationEngine.ADAPTERS),
+  );
   private readonly breakers = new Map<string, CircuitBreaker>();
   private readonly semaphores = new Map<string, Semaphore>();
 
@@ -98,6 +109,11 @@ export class IntegrationEngine implements OnModuleDestroy {
 
   async onModuleDestroy() {
     await closeUpstreamAgents();
+  }
+
+  /** Only connectors that don't require a credential (registry) may run unauthenticated (authType NONE). */
+  private skipsCredential(p: ApiProvider) {
+    return !connectorDef(p.kind).requiresCredential && p.authType === 'NONE';
   }
 
   breaker(providerId: string) {
@@ -138,29 +154,13 @@ export class IntegrationEngine implements OnModuleDestroy {
     // Build URL strictly from admin configuration.
     let url: URL;
     try {
-      const base = provider.baseUrl.replace(/\/+$/, '');
-      url = new URL(
-        base +
-          renderPath(
-            integration.upstreamPath.startsWith('/')
-              ? integration.upstreamPath
-              : `/${integration.upstreamPath}`,
-            v.path,
-          ),
-      );
+      url = buildUpstreamUrl(provider.baseUrl, integration, v.path, v.query);
     } catch (e) {
       throw new EngineError(
         e instanceof MappingError ? 'VALIDATION' : 'CONFIG',
         (e as Error).message,
       );
     }
-    const qm = (integration.queryMapping ?? {}) as {
-      map?: Record<string, string>;
-      static?: Record<string, string>;
-    };
-    for (const [k, val] of Object.entries(v.query))
-      url.searchParams.set(qm.map?.[k] ?? k, String(val));
-    for (const [k, val] of Object.entries(qm.static ?? {})) url.searchParams.set(k, String(val));
 
     const hm = (integration.headerMapping ?? {}) as { static?: Record<string, string> };
     const headers: Record<string, string> = {
@@ -194,10 +194,7 @@ export class IntegrationEngine implements OnModuleDestroy {
     // Credentials + adapter auth.
     const adapter = this.adapters.get(provider.kind);
     if (!adapter) throw new EngineError('CONFIG', `No adapter for ${provider.kind}`);
-    const secret =
-      provider.authType === 'NONE' && provider.kind !== 'RAPIDAPI'
-        ? null
-        : await this.creds.get(provider.id);
+    const secret = this.skipsCredential(provider) ? null : await this.creds.get(provider.id);
     let auth;
     try {
       auth = await adapter.authenticate({
@@ -271,16 +268,19 @@ export class IntegrationEngine implements OnModuleDestroy {
     else breaker.success();
 
     let json: unknown;
+    let parsed: unknown;
     if (res.contentType?.includes('json') && res.body.length) {
       try {
-        json = transformResponse(
-          JSON.parse(res.body.toString('utf8')),
-          integration.responseTransform as ResponseTransform | null,
-        );
+        parsed = JSON.parse(res.body.toString('utf8'));
+        json = transformResponse(parsed, integration.responseTransform as ResponseTransform | null);
       } catch {
         json = undefined;
       }
     }
+    const credentialRejected =
+      res.status === 401 ||
+      res.status === 403 ||
+      (res.status >= 400 && adapter.isCredentialError?.(res.status, parsed) === true);
     return {
       status: res.status,
       contentType: res.contentType,
@@ -288,6 +288,7 @@ export class IntegrationEngine implements OnModuleDestroy {
       raw: res.body,
       upstreamLatencyMs: res.latencyMs,
       attempts,
+      credentialRejected,
     };
   }
 
@@ -305,10 +306,7 @@ export class IntegrationEngine implements OnModuleDestroy {
     try {
       const url = new URL(provider.baseUrl.replace(/\/+$/, '') + (provider.healthCheckPath ?? ''));
       const adapter = this.adapters.get(provider.kind)!;
-      const secret =
-        provider.authType === 'NONE' && provider.kind !== 'RAPIDAPI'
-          ? null
-          : await this.creds.get(provider.id);
+      const secret = this.skipsCredential(provider) ? null : await this.creds.get(provider.id);
       const auth = await adapter.authenticate({
         provider,
         url,
@@ -330,12 +328,30 @@ export class IntegrationEngine implements OnModuleDestroy {
         allowPrivate: this.allowPrivate(provider),
         maxResponseBytes: 256 * 1024,
       });
-      const ok = res.status < 500 && res.status !== 401 && res.status !== 403 && res.status !== 429;
+      let body: unknown;
+      try {
+        body = res.contentType?.includes('json')
+          ? JSON.parse(res.body.toString('utf8'))
+          : undefined;
+      } catch {
+        body = undefined;
+      }
+      const credentialRejected = adapter.isCredentialError?.(res.status, body) === true;
+      const ok =
+        res.status < 500 &&
+        res.status !== 401 &&
+        res.status !== 403 &&
+        res.status !== 429 &&
+        !credentialRejected;
       return {
         ok,
         statusCode: res.status,
         latencyMs: res.latencyMs,
-        error: ok ? null : `HTTP ${res.status}`,
+        error: ok
+          ? null
+          : credentialRejected
+            ? `Credential rejected (HTTP ${res.status})`
+            : `HTTP ${res.status}`,
       };
     } catch (e) {
       return {
@@ -427,3 +443,28 @@ export class IntegrationEngine implements OnModuleDestroy {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Builds the upstream URL strictly from admin configuration: provider base URL + integration path
+ * (path params URL-encoded, traversal rejected) + validated query values renamed via queryMapping.
+ */
+export function buildUpstreamUrl(
+  baseUrl: string,
+  integration: Pick<ApiIntegration, 'upstreamPath' | 'queryMapping'>,
+  pathValues: Record<string, string | number | boolean>,
+  queryValues: Record<string, string | number | boolean>,
+): URL {
+  const base = baseUrl.replace(/\/+$/, '');
+  const path = integration.upstreamPath.startsWith('/')
+    ? integration.upstreamPath
+    : `/${integration.upstreamPath}`;
+  const url = new URL(base + renderPath(path, pathValues));
+  const qm = (integration.queryMapping ?? {}) as {
+    map?: Record<string, string>;
+    static?: Record<string, string>;
+  };
+  for (const [k, val] of Object.entries(queryValues))
+    url.searchParams.set(qm.map?.[k] ?? k, String(val));
+  for (const [k, val] of Object.entries(qm.static ?? {})) url.searchParams.set(k, String(val));
+  return url;
+}

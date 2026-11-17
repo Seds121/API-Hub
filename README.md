@@ -37,10 +37,13 @@ One VPS, one command: see **[docs/DEPLOY.md](docs/DEPLOY.md)** (`infra/scripts/b
 | Integration | Status without credentials | Required |
 |---|---|---|
 | RapidAPI / direct suppliers | Mock upstream (`isMock` providers, refused in production) | Supplier API key per provider **plus** a verified redistribution license |
+| Brave Search (first-class connector) | Connector, template and gateway tested in CI against a Brave-shaped mock; live call needs your key | Brave API key in **Admin → API Providers → Credentials** + verified license. `BRAVE_API_KEY` in `.env` only seeds it locally/DEMO_MODE |
 | Stripe | Signature verification tested offline; checkout not exercised | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | PayPal | Implemented, **untested** | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID` |
 | Bank transfer | Fully working (admin verification) | Bank instructions text |
 | Email alerts | Events recorded in the admin console; not sent by email | SMTP integration (not implemented) |
+
+Example customer call (Brave): `GET /v1/brave-web-search/search?q=openai` with `Authorization: Bearer zz_live_…`. See [docs/PROVIDERS.md](docs/PROVIDERS.md#brave-search-first-class-connector).
 
 ## Tests
 

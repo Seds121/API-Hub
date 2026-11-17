@@ -28,6 +28,7 @@ export const PINO_REDACT_PATHS = [
   'req.headers.cookie',
   'req.headers["x-api-key"]',
   'req.headers["x-rapidapi-key"]',
+  'req.headers["x-subscription-token"]',
   'req.headers["x-csrf-token"]',
   'res.headers["set-cookie"]',
   '*.password',

@@ -17,7 +17,8 @@ describe('API key generation & validation primitives', () => {
   it('HMAC verification is deterministic and constant-time comparable', () => {
     const k = generateApiKey('test');
     expect(safeEqualHex(hmacApiKey(k.full), k.hash)).toBe(true);
-    expect(safeEqualHex(hmacApiKey(k.full.slice(0, -1) + 'Z'), k.hash)).toBe(false);
+    const tampered = k.full.slice(0, -1) + (k.full.endsWith('Z') ? 'Y' : 'Z'); // always differs
+    expect(safeEqualHex(hmacApiKey(tampered), k.hash)).toBe(false);
   });
   it('produces unique high-entropy secrets', () => {
     const set = new Set(Array.from({ length: 2000 }, () => randomBase62(20)));

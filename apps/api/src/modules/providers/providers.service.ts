@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { CONNECTOR_KINDS, connectorDef } from '@zeze/shared';
 import { z } from 'zod';
 import type { ParamDef } from '@zeze/shared';
 import { PrismaService } from '../../common/prisma.service';
@@ -71,6 +72,37 @@ export class ProvidersService {
       ?.tokenUrl;
     if (tokenUrl) hosts.add(new URL(tokenUrl).hostname.toLowerCase());
     return [...hosts];
+  }
+
+  /**
+   * Registry-driven connector semantics: named connectors (RapidAPI, Brave, …) have a fixed auth
+   * type and only the auth config keys they use; a registry default base URL fills an omitted one.
+   */
+  private applyConnectorRules<T extends Partial<ProviderInput>>(input: T, isUpdate = false): T {
+    const def = connectorDef(input.kind ?? 'DIRECT_REST');
+    const out = { ...input };
+    if (!out.baseUrl && def.defaultBaseUrl && !isUpdate) out.baseUrl = def.defaultBaseUrl;
+    if (def.fixedAuthType) {
+      out.authType = def.fixedAuthType;
+      if (out.authConfig || !isUpdate) {
+        const rapidApiHost = def.formHints.showRapidApiHost
+          ? out.authConfig?.rapidApiHost
+          : undefined;
+        out.authConfig = rapidApiHost ? { rapidApiHost } : {};
+      }
+    }
+    if (def.defaults && !isUpdate) {
+      if (input.timeoutMs === undefined && def.defaults.timeoutMs)
+        out.timeoutMs = def.defaults.timeoutMs;
+      if (input.rateLimitPerMinute === undefined && def.defaults.rateLimitPerMinute)
+        out.rateLimitPerMinute = def.defaults.rateLimitPerMinute;
+    }
+    return out;
+  }
+
+  /** Registry metadata for the admin UI (no secrets). */
+  connectors() {
+    return CONNECTOR_KINDS.map((k) => connectorDef(k));
   }
 
   list(q?: string) {
@@ -175,11 +207,13 @@ export class ProvidersService {
   async create(input: ProviderInput, auth: AuthContext, meta: RequestMeta) {
     if (input.isMock && !demoAllowed())
       throw badRequest('Mock providers cannot be created in production.');
+    input = this.applyConnectorRules(input) as ProviderInput;
     const allowedHosts = this.computeHosts(input)!;
     const { additionalAllowedHosts: _a, ...data } = input;
     const p = await this.prisma.apiProvider.create({
       data: {
         ...data,
+        baseUrl: data.baseUrl!,
         allowedHosts,
         authConfig: data.authConfig as Prisma.InputJsonValue,
         defaultHeaders: data.defaultHeaders,
@@ -206,6 +240,7 @@ export class ProvidersService {
     if (!cur) throw notFound('Provider');
     if (input.isMock && !demoAllowed())
       throw badRequest('Mock providers cannot be enabled in production.');
+    input = this.applyConnectorRules({ ...input, kind: input.kind ?? cur.kind }, true);
     const allowedHosts = this.computeHosts(
       {
         ...input,
@@ -269,6 +304,15 @@ export class ProvidersService {
   ) {
     await this.get(providerId);
     const s = input.secret;
+    const provider = await this.prisma.apiProvider.findUniqueOrThrow({
+      where: { id: providerId },
+      select: { kind: true },
+    });
+    const def = connectorDef(provider.kind);
+    if (!def.credential.kinds.includes(input.kind))
+      throw badRequest(
+        `${def.label} providers accept only ${def.credential.kinds.join(' / ')} credentials. ${def.credential.help}`,
+      );
     const required: Record<string, boolean> = {
       API_KEY: !!s.apiKey,
       BEARER_TOKEN: !!s.token,
@@ -635,7 +679,11 @@ export class ProvidersService {
         ok: r.status >= 200 && r.status < 300,
         status: r.status,
         latencyMs: r.upstreamLatencyMs,
-        error: r.status >= 400 ? `Upstream HTTP ${r.status}` : null,
+        error: r.credentialRejected
+          ? `Supplier rejected our credential (HTTP ${r.status}) — check/rotate the provider credential`
+          : r.status >= 400
+            ? `Upstream HTTP ${r.status}`
+            : null,
         bodyPreview: truncateJson(preview),
         contentType: r.contentType,
       };

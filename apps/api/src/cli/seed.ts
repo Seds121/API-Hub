@@ -2,7 +2,7 @@
  * Always: roles, permissions, platform org, first admin.
  * Demo catalog only when NODE_ENV !== 'production' or DEMO_MODE=true (and SEED_DEMO !== 'false'). */
 import { PrismaClient } from '@prisma/client';
-import { seedDemo, seedPlatform, seedRbac } from '../seed/seed-lib';
+import { seedBrave, seedDemo, seedPlatform, seedRbac } from '../seed/seed-lib';
 
 export async function runSeed() {
   const prisma = new PrismaClient();
@@ -34,6 +34,17 @@ export async function runSeed() {
     console.warn(
       `✔ DEMO data: demo@acme.test / agency@northwind.test, password "${demoPassword}"`,
     );
+    const braveKey = process.env.BRAVE_API_KEY?.trim();
+    if (braveKey) {
+      await seedBrave(prisma, { apiKey: braveKey, adminUserId: user.id });
+      console.warn(
+        '✔ Brave Search provider + published "brave-web-search" API (real Brave key, demo license)',
+      );
+    } else {
+      console.warn(
+        '• Brave seed skipped (BRAVE_API_KEY not set) — add Brave in Admin → API Providers instead',
+      );
+    }
   } finally {
     await prisma.$disconnect();
   }

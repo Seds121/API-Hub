@@ -43,6 +43,12 @@ export interface ProviderAdapter {
   readonly kind: ProviderKind;
   /** Produces the auth headers/query for one upstream call. Must not mutate inputs. */
   authenticate(ctx: AdapterContext): Promise<AuthMaterial>;
+  /**
+   * Optional: recognise supplier responses meaning "our credential was rejected" when the supplier
+   * doesn't use 401/403 (e.g. Brave answers 422 SUBSCRIPTION_TOKEN_INVALID). The gateway then treats
+   * it as our problem: 503 to the customer, never billed, logged for operators.
+   */
+  isCredentialError?(status: number, body: unknown): boolean;
 }
 
 export class ProviderConfigError extends Error {}

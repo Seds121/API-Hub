@@ -78,3 +78,20 @@ test('admin: providers, licensing gate and integration test from the console', a
   await expect(page.getByText('Cannot publish yet')).toBeVisible();
   await expect(page.getByRole('main').getByText(/No verified redistribution license/)).toBeVisible();
 });
+
+test('admin: Brave Search is a first-class connector in the provider form', async ({ page }) => {
+  await page.goto('/login');
+  await page.fill('#email', process.env.E2E_ADMIN_EMAIL ?? 'admin@zeze.local');
+  await page.fill('#password', process.env.E2E_ADMIN_PASSWORD ?? 'ChangeMe-Admin-2026');
+  await page.click('button[type=submit]');
+  await page.waitForURL(/\/(admin|dashboard)/);
+  await page.goto('/admin/providers');
+  await page.getByRole('button', { name: 'Add provider' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('combobox').first().click();
+  await page.getByRole('option', { name: 'Brave Search' }).click();
+  await expect(dialog.locator('#pb')).toHaveValue('https://api.search.brave.com');
+  await expect(dialog.getByText('X-Subscription-Token').first()).toBeVisible();
+  await expect(dialog.locator('#rh')).toHaveCount(0); // no RapidAPI host field
+  await expect(dialog.getByText('Auth method')).toHaveCount(0); // auth locked by the connector
+});

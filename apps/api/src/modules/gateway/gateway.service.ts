@@ -469,7 +469,7 @@ export class GatewayService {
       }
       return this.sendUpstreamBody(res, s, result);
     }
-    if (s === 401 || s === 403) {
+    if (result.credentialRejected) {
       logger.error(
         { provider: used?.provider.slug, status: s, correlationId: ctx.correlationId },
         'upstream rejected our credentials',

@@ -38,6 +38,7 @@ enum RoleScope {
 enum ProviderKind {
   RAPIDAPI
   DIRECT_REST
+  BRAVE
 }
 
 enum ProviderAuthType {

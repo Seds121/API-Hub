@@ -4,6 +4,9 @@ import { renderPath, renderTemplate, transformResponse, validateInput } from './
 import { RapidApiAdapter } from '../adapters/rapidapi.adapter';
 import { DirectRestAdapter } from '../adapters/direct-rest.adapter';
 import type { ApiProvider } from '@prisma/client';
+import { BraveAdapter } from '../adapters/brave.adapter';
+import { ProviderConfigError } from '../adapters/types';
+import { buildUpstreamUrl } from './integration-engine.service';
 
 describe('SSRF protection', () => {
   it.each([
@@ -179,5 +182,66 @@ describe('Provider adapters', () => {
         )
       ).headers.Authorization,
     ).toBe('Bearer tok');
+  });
+});
+
+describe('Brave Search connector', () => {
+  const provider = { kind: 'BRAVE', authType: 'API_KEY', authConfig: {} } as unknown as ApiProvider;
+  const ctx = (secret: object | null) => ({
+    provider,
+    url: new URL('https://api.search.brave.com/res/v1/web/search'),
+    secret,
+    getOAuthToken: async () => 'x',
+  });
+
+  it('sends the platform key as X-Subscription-Token only', async () => {
+    const r = await new BraveAdapter().authenticate(ctx({ apiKey: 'BSA-secret' }));
+    expect(r).toEqual({ headers: { 'X-Subscription-Token': 'BSA-secret' }, query: {} });
+  });
+
+  it('fails clearly when the credential or api key is missing', async () => {
+    await expect(new BraveAdapter().authenticate(ctx(null))).rejects.toBeInstanceOf(
+      ProviderConfigError,
+    );
+    await expect(new BraveAdapter().authenticate(ctx({ token: 'wrong-field' }))).rejects.toThrow(
+      /no active API key/,
+    );
+  });
+
+  it('builds the Brave web search URL from admin config + validated query only', () => {
+    const url = buildUpstreamUrl(
+      'https://api.search.brave.com/',
+      { upstreamPath: '/res/v1/web/search', queryMapping: {} },
+      {},
+      { q: 'openai', count: 5, safesearch: 'strict' },
+    );
+    expect(url.toString()).toBe(
+      'https://api.search.brave.com/res/v1/web/search?q=openai&count=5&safesearch=strict',
+    );
+  });
+});
+
+describe('Brave credential-error classification', () => {
+  const b = new BraveAdapter();
+  it('treats Brave 422 SUBSCRIPTION_TOKEN_INVALID / authentication as our credential problem', () => {
+    expect(
+      b.isCredentialError(422, {
+        type: 'ErrorResponse',
+        error: { code: 'SUBSCRIPTION_TOKEN_INVALID', meta: { component: 'authentication' } },
+      }),
+    ).toBe(true);
+    expect(b.isCredentialError(422, { error: { meta: { component: 'authentication' } } })).toBe(
+      true,
+    );
+    expect(b.isCredentialError(401, null)).toBe(true);
+  });
+  it('leaves genuine request-validation 422s to the customer', () => {
+    expect(
+      b.isCredentialError(422, {
+        error: { code: 'VALIDATION', meta: { component: 'validation' } },
+      }),
+    ).toBe(false);
+    expect(b.isCredentialError(429, { error: { code: 'RATE_LIMITED' } })).toBe(false);
+    expect(b.isCredentialError(422, null)).toBe(false);
   });
 });

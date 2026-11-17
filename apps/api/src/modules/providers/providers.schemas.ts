@@ -1,13 +1,14 @@
 import { z } from 'zod';
-import { HTTP_METHODS, moneyStringSchema } from '@zeze/shared';
+import { CONNECTOR_KINDS, connectorDef, HTTP_METHODS, moneyStringSchema } from '@zeze/shared';
 
 const hostname = z
   .string()
   .trim()
   .toLowerCase()
   .regex(/^[a-z0-9.-]{1,253}$/, 'Invalid hostname');
+/** Exact headers that must never be static, plus any secret-looking name (e.g. X-Subscription-Token, X-Api-Key). */
 const FORBIDDEN_STATIC_HEADERS =
-  /^(authorization|cookie|host|x-rapidapi-key|proxy-authorization|content-length)$/i;
+  /^(authorization|cookie|host|x-rapidapi-key|proxy-authorization|content-length)$|token|secret|api-?key|password|passwd|auth/i;
 const headerRecord = z
   .record(
     z.string().regex(/^[A-Za-z0-9-]{1,64}$/),
@@ -21,17 +22,18 @@ const headerRecord = z
     'Secret headers must be stored as credentials, not static headers',
   );
 
-export const providerSchema = z.object({
+const providerBase = z.object({
   name: z.string().trim().min(2).max(120),
   slug: z
     .string()
     .trim()
     .toLowerCase()
     .regex(/^[a-z0-9-]{2,60}$/),
-  kind: z.enum(['RAPIDAPI', 'DIRECT_REST']),
+  kind: z.enum(CONNECTOR_KINDS),
   description: z.string().max(2000).optional().nullable(),
   website: z.string().url().optional().nullable(),
-  baseUrl: z.string().url().max(500),
+  /** Optional for connectors with a registry default (e.g. Brave). */
+  baseUrl: z.string().url().max(500).optional(),
   additionalAllowedHosts: z.array(hostname).max(10).default([]),
   authType: z
     .enum(['NONE', 'API_KEY', 'BEARER', 'BASIC', 'OAUTH2', 'CUSTOM_HEADERS'])
@@ -65,7 +67,15 @@ export const providerSchema = z.object({
   status: z.enum(['ACTIVE', 'DEGRADED', 'DOWN', 'DISABLED']).default('ACTIVE'),
   isMock: z.boolean().default(false),
 });
-export const providerUpdateSchema = providerSchema.partial();
+export const providerSchema = providerBase.superRefine((v, ctx) => {
+  if (!v.baseUrl && !connectorDef(v.kind).defaultBaseUrl)
+    ctx.addIssue({
+      code: 'custom',
+      path: ['baseUrl'],
+      message: 'Base URL is required for this connector',
+    });
+});
+export const providerUpdateSchema = providerBase.partial();
 
 export const credentialSchema = z.object({
   label: z.string().trim().min(1).max(120),
